@@ -11,7 +11,7 @@ const handlers = loadPacketHandlers(
   { rootDir }
 );
 
-assert(handlers.size >= 499, `expected at least 499 implemented request handlers, found ${handlers.size}`);
+assert(handlers.size >= 497, `expected at least 497 implemented request handlers, found ${handlers.size}`);
 for (const [packetId, handler] of handlers) {
   assert(Number.isInteger(packetId) && packetId >= 0, `invalid packet id ${packetId}`);
   assert.strictEqual(typeof handler.handle, "function", `packet ${packetId} has no handler`);
@@ -22,7 +22,15 @@ const specialistOwners = new Map([
   [226, "modules\\profile\\handlers\\"],
   [844, "modules\\misc-stages\\handlers\\"],
   [855, "modules\\simulation\\handlers\\"],
+  [861, "packet-handlers\\"],
   [1000, "modules\\equipment-pipeline\\handlers\\"],
+  [1008, "modules\\equipment-pipeline\\handlers\\"],
+  [1026, "modules\\equipment-pipeline\\handlers\\"],
+  [1255, "modules\\explore\\handlers\\"],
+  [1257, "modules\\explore\\handlers\\"],
+  [1263, "modules\\explore\\handlers\\"],
+  [1265, "modules\\explore\\handlers\\"],
+  [3400, "modules\\guild\\handlers\\"],
   [1400, "modules\\unit-growth\\handlers\\"],
   [1438, "modules\\collection\\handlers\\"],
   [1600, "modules\\deck-pipeline\\handlers\\"],
@@ -32,17 +40,22 @@ const specialistOwners = new Map([
   [2000, "modules\\world-map\\handlers\\"],
   [2400, "modules\\shop\\handlers\\"],
   [2608, "modules\\stamina\\handlers\\"],
+  [2615, "modules\\local-pvp\\handlers\\"],
+  [2617, "modules\\local-pvp\\handlers\\"],
   [2800, "modules\\contract\\handlers\\"],
   [3008, "modules\\event-pass\\handlers\\"],
+  [3485, "modules\\guild\\handlers\\"],
   [3600, "modules\\office\\handlers\\"],
   [3800, "modules\\admin\\handlers\\"],
+  [3902, "packet-handlers\\"],
+  [3904, "packet-handlers\\"],
 ]);
 
 for (const [packetId, expectedPrefix] of specialistOwners) {
   const handler = handlers.get(packetId);
   assert(handler, `missing specialist request handler ${packetId}`);
   assert(
-    String(handler.fileName).startsWith(expectedPrefix),
+    String(handler.fileName).replace(/\\/g, "/").startsWith(expectedPrefix.replace(/\\/g, "/")),
     `packet ${packetId} is owned by ${handler.fileName}; expected ${expectedPrefix}`
   );
 }

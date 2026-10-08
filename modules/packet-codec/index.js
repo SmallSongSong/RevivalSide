@@ -776,6 +776,7 @@ module.exports = {
   dateTimeBinaryNow,
   farFutureDateTimeBinary,
   readSignedVarInt,
+  readVarInt,
   readSignedVarLong,
   readBool,
   readByte,

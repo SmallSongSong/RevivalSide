@@ -1257,6 +1257,10 @@ function expireCityBuilding(user, cityID, buildID, options = {}) {
 
 function startDive(user, req, options = {}) {
   const state = ensureWorldMapState(user, options);
+  const active = getActiveDive(user, options);
+  if (active && active.player.base.state !== DIVE_PLAYER_STATE.ANNIHILATION) {
+    return { cityID: active.cityID, dive: active, costItems: [] };
+  }
   const city = ensureCityState(user, req.cityID || firstCityId(), options);
   const stageID = positiveInt(req.stageID) || firstDiveStageId();
   const dive = createDiveState(user, {
@@ -1283,12 +1287,16 @@ function createDiveState(user, options = {}) {
   const slotSets = createDiveSlotSets(stageID, randomSetCount, slotCount);
   const deckIndexes = uniqueNonNegativeInts(options.deckIndexes).slice(0, Math.max(1, Number(templet && templet.SQUAD_COUNT) || 4));
   if (!deckIndexes.length) deckIndexes.push(0);
+  // Local routes currently contain only battles, so their starting ammo must
+  // cover every node without relying on supply events that are not generated.
+  const initialSupply = Math.max(2, Math.ceil((randomSetCount + 1) / deckIndexes.length));
   const squads = {};
-  for (const deckIndex of deckIndexes) squads[String(deckIndex)] = { state: 0, deckIndex, curHp: 100000, maxHp: 100000, supply: 2 };
+  for (const deckIndex of deckIndexes) squads[String(deckIndex)] = { state: 0, deckIndex, curHp: 100000, maxHp: 100000, supply: initialSupply };
   const leaderDeckIndex = deckIndexes[0] || 0;
   return normalizeDiveState(
     {
       diveUid: String(nextWorldMapUid(user, options)),
+      supplyRuleVersion: 1,
       cityID: positiveInt(options.cityID) || firstCityId(),
       isAuto: false,
       floor: {
@@ -1347,13 +1355,26 @@ function normalizeDiveState(dive, options = {}) {
   const randomSetCount = Math.max(1, Number((data.floor && data.floor.randomSetCount) || (templet && templet.RANDOM_SET_COUNT)) || 2);
   const slotCount = Math.max(1, Math.min(5, Number(templet && templet.SLOT_COUNT) || 3));
   const floor = data.floor && typeof data.floor === "object" ? data.floor : {};
+  const firstSlots = floor.slotSets && floor.slotSets[0] && floor.slotSets[0].slots;
+  const hasLegacyStart = Array.isArray(firstSlots) && firstSlots.length === 1 &&
+    [DIVE_SECTOR_TYPE.START, 0].includes(Number(firstSlots[0] && firstSlots[0].sectorType || 0));
   const slotSets = normalizeDiveSlotSets(floor.slotSets, stageID, randomSetCount, slotCount);
   const player = data.player && typeof data.player === "object" ? data.player : {};
   const base = player.base && typeof player.base === "object" ? player.base : {};
-  const distance = Math.max(0, Number(base.distance || 0) || 0);
-  const slotSetIndex = distance === 0 ? -1 : Math.max(0, Number(base.slotSetIndex != null ? base.slotSetIndex : 0) || 0);
+  let distance = Math.max(0, Number(base.distance || 0) || 0);
+  const slotSetIndex = distance === 0 ? -1 : Math.min(slotSets.length - 1,
+    Math.max(0, (Number(base.slotSetIndex != null ? base.slotSetIndex : 0) || 0) - (hasLegacyStart ? 1 : 0)));
+  if (hasLegacyStart && distance > 0) distance = slotSetIndex + 1;
+  const squads = normalizeDiveSquads(player.squads);
+  if (Number(data.supplyRuleVersion || 0) < 1 && slotSets.every((set) => set.slots.every((slot) => isDiveBattleEvent(slot.eventType)))) {
+    const additionalSupply = Math.max(0, Math.ceil((randomSetCount + 1) / Math.max(1, Object.keys(squads).length)) - 2);
+    for (const squad of Object.values(squads)) {
+      if (isDiveSquadAlive(squad)) squad.supply += additionalSupply;
+    }
+  }
   return {
     diveUid: String(toBigInt(data.diveUid || data.DiveUid || 0)),
+    supplyRuleVersion: 1,
     cityID: positiveInt(data.cityID) || firstCityId(),
     isAuto: Boolean(data.isAuto),
     floor: {
@@ -1371,7 +1392,7 @@ function normalizeDiveState(dive, options = {}) {
     player: {
       base: {
         state: Math.max(0, Number(base.state || 0) || 0),
-        prevSlotSetIndex: Number(base.prevSlotSetIndex != null ? base.prevSlotSetIndex : -1),
+        prevSlotSetIndex: Math.max(-1, Number(base.prevSlotSetIndex != null ? base.prevSlotSetIndex : -1) - (hasLegacyStart ? 1 : 0)),
         prevSlotIndex: Number(base.prevSlotIndex || 0) || 0,
         slotSetIndex,
         slotIndex: Number(base.slotIndex || 0) || 0,
@@ -1382,7 +1403,7 @@ function normalizeDiveState(dive, options = {}) {
         artifacts: uniquePositiveInts(base.artifacts),
         reservedArtifacts: uniquePositiveInts(base.reservedArtifacts),
       },
-      squads: normalizeDiveSquads(player.squads),
+      squads,
     },
   };
 }
@@ -1456,8 +1477,13 @@ function normalizeDiveSquads(squads) {
 }
 
 function moveDiveForward(user, slotIndex, options = {}) {
-  const dive = getActiveDive(user, options) || createDiveState(user, options);
+  const dive = getActiveDive(user, options);
+  if (!dive) return { dive: null, syncData: {} };
   const base = dive.player.base;
+  // A retried move must not skip the battle already reserved for this node.
+  if (base.state !== DIVE_PLAYER_STATE.EXPLORING) {
+    return { dive, syncData: { updatedPlayer: cloneDivePlayerBase(base) } };
+  }
   const nextSetIndex = Math.min(dive.floor.slotSets.length - 1, base.distance === 0 ? 0 : base.slotSetIndex + 1);
   const slots = dive.floor.slotSets[nextSetIndex] ? dive.floor.slotSets[nextSetIndex].slots : [];
   const nextSlotIndex = Math.max(0, Math.min(Math.max(0, slots.length - 1), Number(slotIndex || 0) || 0));
@@ -1500,30 +1526,49 @@ function setDiveAuto(user, isAuto, options = {}) {
 }
 
 function selectDiveArtifact(user, artifactID, options = {}) {
-  const dive = getActiveDive(user, options) || createDiveState(user, options);
+  const dive = getActiveDive(user, options);
+  if (!dive) return { dive: null, syncData: {} };
   const id = positiveInt(artifactID);
-  if (id > 0 && !dive.player.base.artifacts.includes(id)) dive.player.base.artifacts.push(id);
+  if (dive.player.base.state !== DIVE_PLAYER_STATE.SELECT_ARTIFACT || !dive.player.base.reservedArtifacts.includes(id)) {
+    return { dive, syncData: { updatedPlayer: cloneDivePlayerBase(dive.player.base) } };
+  }
+  if (!dive.player.base.artifacts.includes(id)) dive.player.base.artifacts.push(id);
+  dive.player.base.reservedArtifacts = [];
   dive.player.base.state = 0;
   setActiveDive(user, dive, options);
   return { dive, syncData: { updatedPlayer: dive.player.base } };
 }
 
 function suicideDiveSquad(user, deckIndex, options = {}) {
-  const dive = getActiveDive(user, options) || createDiveState(user, options);
+  const dive = getActiveDive(user, options);
+  if (!dive) return { dive: null, syncData: {} };
   const key = String(Number(deckIndex || 0) || 0);
   if (dive.player.squads[key]) {
     dive.player.squads[key].state = 1;
     dive.player.squads[key].curHp = 0;
   }
+  if (!Object.values(dive.player.squads).some(isDiveSquadAlive)) {
+    dive.player.base.state = DIVE_PLAYER_STATE.ANNIHILATION;
+    dive.player.base.reservedDeckIndex = -1;
+  }
   setActiveDive(user, dive, options);
-  return { dive, syncData: { updatedSquads: dive.player.squads[key] ? [dive.player.squads[key]] : [] } };
+  return {
+    dive,
+    syncData: {
+      updatedPlayer: cloneDivePlayerBase(dive.player.base),
+      updatedSquads: dive.player.squads[key] ? [{ ...dive.player.squads[key] }] : [],
+    },
+  };
 }
 
 function prepareDiveGameLoad(user, req = {}, options = {}) {
   const dive = getActiveDive(user, options);
   if (!dive) return null;
+  if (positiveInt(req.diveStageID) && positiveInt(req.diveStageID) !== dive.floor.stageID) return null;
   const base = dive.player.base;
+  if (![DIVE_PLAYER_STATE.BATTLE_READY, DIVE_PLAYER_STATE.BATTLE_LOAD, DIVE_PLAYER_STATE.BATTLE].includes(base.state)) return null;
   const selectedSlot = getDivePlayerSlot(dive);
+  if (!selectedSlot || !isDiveBattleEvent(selectedSlot.eventType)) return null;
   const dungeonID =
     positiveInt(base.reservedDungeonID) ||
     positiveInt(selectedSlot && selectedSlot.eventValue) ||
@@ -1532,6 +1577,9 @@ function prepareDiveGameLoad(user, req = {}, options = {}) {
       : getDiveDungeonId(dive.floor.stageID, selectedSlot && selectedSlot.sectorType, base.slotIndex, base.slotSetIndex));
   if (!dungeonID) return null;
   const deckIndex = Math.max(0, Number(req.selectDeckIndex != null ? req.selectDeckIndex : base.leaderDeckIndex) || 0);
+  const squad = dive.player.squads[String(deckIndex)];
+  if (!isDiveSquadAlive(squad) || squad.supply <= 0) return null;
+  if ([DIVE_PLAYER_STATE.BATTLE_LOAD, DIVE_PLAYER_STATE.BATTLE].includes(base.state) && base.reservedDeckIndex >= 0 && base.reservedDeckIndex !== deckIndex) return null;
   base.state = DIVE_PLAYER_STATE.BATTLE_LOAD;
   base.reservedDungeonID = dungeonID;
   base.reservedDeckIndex = deckIndex;
@@ -1539,9 +1587,15 @@ function prepareDiveGameLoad(user, req = {}, options = {}) {
   setActiveDive(user, dive, options);
   return {
     dive,
+    diveUid: dive.diveUid,
     diveStageID: dive.floor.stageID,
+    diveSlotSetIndex: base.slotSetIndex,
+    diveSlotIndex: base.slotIndex,
     dungeonID,
     deckIndex,
+    shipInitHp: Math.min(1, squad.curHp / squad.maxHp),
+    squadCurHp: squad.curHp,
+    squadMaxHp: squad.maxHp,
     selectedSlot,
   };
 }
@@ -1553,8 +1607,13 @@ function completeDiveBattle(user, dynamicGame = {}, battleState = {}, options = 
   if (!dive || positiveInt(dive.floor.stageID) !== diveStageID) return null;
 
   const base = dive.player.base;
+  if (![DIVE_PLAYER_STATE.BATTLE_LOAD, DIVE_PLAYER_STATE.BATTLE].includes(base.state)) return null;
+  if (dynamicGame.diveUid != null && String(dynamicGame.diveUid) !== dive.diveUid) return null;
+  if (dynamicGame.diveSlotSetIndex != null && Number(dynamicGame.diveSlotSetIndex) !== base.slotSetIndex) return null;
+  if (dynamicGame.diveSlotIndex != null && Number(dynamicGame.diveSlotIndex) !== base.slotIndex) return null;
+  if (dynamicGame.diveDeckIndex != null && Number(dynamicGame.diveDeckIndex) !== base.reservedDeckIndex) return null;
   const selectedSlot = getDivePlayerSlot(dive);
-  const deckIndex = Math.max(0, Number(base.reservedDeckIndex != null ? base.reservedDeckIndex : dynamicGame.deckIndex || 0) || 0);
+  const deckIndex = base.reservedDeckIndex;
   const syncData = {
     updatedPlayer: null,
     updatedSquads: [],
@@ -1564,14 +1623,19 @@ function completeDiveBattle(user, dynamicGame = {}, battleState = {}, options = 
   };
 
   const squad = dive.player.squads[String(deckIndex)];
-  if (squad) {
-    squad.supply = Math.max(0, Number(squad.supply || 0) - 1);
-    syncData.updatedSquads.push({ ...squad });
-  }
+  if (!isDiveSquadAlive(squad)) return null;
 
   const win = options.win !== false && !isDiveBattleLoss(battleState);
+  squad.supply = Math.max(0, Number(squad.supply || 0) - 1);
+  const shipHpRatio = getDiveShipHpRatio(battleState);
+  if (shipHpRatio != null) squad.curHp = Math.max(0, Math.min(squad.maxHp, squad.maxHp * shipHpRatio));
+  if (!win) squad.curHp = 0;
+  squad.state = squad.curHp > 0 ? 0 : 1;
+  syncData.updatedSquads.push({ ...squad });
   if (!win) {
-    base.state = Object.values(dive.player.squads).some((item) => item && Number(item.curHp || 0) > 0) ? DIVE_PLAYER_STATE.BATTLE_READY : DIVE_PLAYER_STATE.ANNIHILATION;
+    const nextSquad = Object.values(dive.player.squads).find((item) => isDiveSquadAlive(item) && item.supply > 0);
+    base.state = nextSquad ? DIVE_PLAYER_STATE.BATTLE_READY : DIVE_PLAYER_STATE.ANNIHILATION;
+    if (nextSquad) base.leaderDeckIndex = nextSquad.deckIndex;
     base.reservedDeckIndex = -1;
     syncData.updatedPlayer = cloneDivePlayerBase(base);
     setActiveDive(user, dive, options);
@@ -1593,7 +1657,11 @@ function completeDiveBattle(user, dynamicGame = {}, battleState = {}, options = 
     return { dive, syncData, cleared: true };
   }
 
-  base.state = DIVE_PLAYER_STATE.EXPLORING;
+  const nextSquad = isDiveSquadAlive(squad) && squad.supply > 0
+    ? squad
+    : Object.values(dive.player.squads).find((item) => isDiveSquadAlive(item) && item.supply > 0);
+  base.state = nextSquad ? DIVE_PLAYER_STATE.EXPLORING : DIVE_PLAYER_STATE.ANNIHILATION;
+  if (nextSquad) base.leaderDeckIndex = nextSquad.deckIndex;
   syncData.updatedPlayer = cloneDivePlayerBase(base);
   setActiveDive(user, dive, options);
   return { dive, syncData, cleared: false };
@@ -1603,11 +1671,28 @@ function isDiveBattleEvent(eventType) {
   return Number(eventType || 0) === DIVE_EVENT_TYPE.DUNGEON || Number(eventType || 0) === DIVE_EVENT_TYPE.DUNGEON_BOSS;
 }
 
+function isDiveSquadAlive(squad) {
+  return Boolean(squad && Number(squad.state || 0) === 0 && Number(squad.curHp || 0) > 0);
+}
+
+function getDiveShipHpRatio(battleState = {}) {
+  const curHp = firstFiniteNumber(battleState.diveShipCurHp, battleState.DiveShipCurHp);
+  const maxHp = firstFiniteNumber(battleState.diveShipMaxHp, battleState.DiveShipMaxHp);
+  if (curHp != null && maxHp > 0) return Math.max(0, Math.min(1, curHp / maxHp));
+  const units = Array.isArray(battleState.units) ? battleState.units : Array.isArray(battleState.Units) ? battleState.Units : [];
+  const ship = units.find((unit) => Number(unit.team ?? unit.Team) === 1 && String(unit.role ?? unit.Role) === "ship");
+  if (!ship) return null;
+  const hp = firstFiniteNumber(ship.hp, ship.Hp);
+  const shipMaxHp = firstFiniteNumber(ship.maxHp, ship.MaxHp);
+  return hp != null && shipMaxHp > 0 ? Math.max(0, Math.min(1, hp / shipMaxHp)) : null;
+}
+
 function isDiveBattleLoss(battleState = {}) {
   if (!battleState || typeof battleState !== "object") return false;
   if (battleState.giveup === true || battleState.Giveup === true) return true;
   if (battleState.win === false || battleState.Win === false) return true;
-  if (battleState.gameState && Number(battleState.gameState.winTeam || 0) === 3) return true;
+  if (Number(battleState.gameState && (battleState.gameState.winTeam ?? battleState.gameState.WinTeam) || 0) === 3) return true;
+  if (Number(battleState.GameState && (battleState.GameState.WinTeam ?? battleState.GameState.winTeam) || 0) === 3) return true;
   return false;
 }
 

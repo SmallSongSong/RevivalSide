@@ -1,8 +1,10 @@
 const { getTutorialStageForRequest, isTutorialDungeonId, isTutorialStageId, TUTORIAL_STAGE_CHAIN } = require("../stages/tutorialStage");
 const { getMainStoryStageForRequest } = require("../stages/mainStoryStage");
 const { buildPlayerDeckForGameLoad } = require("../modules/unit");
+const { writeSignedVarInt, writeNullObject, writeObjectList } = require("../modules/packet-codec");
 const { eventDeckHasFreeShipSlot, eventDeckHasGivenUnitSlots, getEventDeckPlayerUnitSlots } = require("../modules/game-data");
 const worldMap = require("../modules/world-map");
+const explore = require("../modules/explore");
 
 const NGT_DIVE = 5;
 
@@ -12,6 +14,16 @@ module.exports = {
   handle(ctx, socket, packet) {
     ctx.logGameLoadReq(packet.payload);
     const req = ctx.decodeGameLoadReq(packet.payload);
+    if (!req) return rejectGameLoad(ctx, socket, packet, "invalid-game-load");
+    const replay = socket.session && socket.session.gameReplay;
+    const requestKey = JSON.stringify(req, (_key, value) => typeof value === "bigint" ? value.toString() : value);
+    if (replay && replay.dynamicGame && !replay.dynamicBattleResultSent && !(replay.dynamicGame.tutorial && replay.tutorialClearRecorded)) {
+      if (replay.gameLoadRequestKey === requestKey && replay.gameLoadAckPayload) {
+        ctx.sendGameResponse(socket, packet, ctx.constants.GAME_LOAD_ACK, replay.gameLoadAckPayload, "game-load-retry");
+        return true;
+      }
+      return rejectGameLoad(ctx, socket, packet, "battle-already-loading");
+    }
     // Stage selection can arrive with a stale/captured dungeonID. Prefer the
     // selected stageID first so Act 2+ does not get pulled back into 1004.
     // Tutorial stages must come from tutorialStage.js, not the main-story catalog
@@ -20,10 +32,38 @@ module.exports = {
     const requestedStageId = Number((req && req.stageID) || 0);
     const requestedDungeonId = Number((req && req.dungeonID) || 0);
     const requestedFierceBossId = Number((req && req.fierceBossId) || 0);
+    if (Number(req && req.palaceID || 0) > 0 && user && user.miscStages && user.miscStages.shadow && user.miscStages.shadow.life === 0) {
+      ctx.sendGameResponse(socket, packet, ctx.constants.GAME_LOAD_ACK,
+        Buffer.concat([writeSignedVarInt(1), writeNullObject(), writeObjectList([])]), "shadow-palace-exhausted");
+      return true;
+    }
+    const trim = user && user.miscStages && user.miscStages.trim && user.miscStages.trim.current;
+    if (trim && (trim.trimStageList || []).some((row) => Number(row.DungeonID) === requestedDungeonId || Number(row.DungeonID) === requestedStageId)) {
+      req.trimId = trim.trimId;
+      req.trimLevel = trim.trimLevel;
+      const trimIndex = trim.trimStageList.findIndex((row) => Number(row.DungeonID) === requestedDungeonId || Number(row.DungeonID) === requestedStageId);
+      if (!req.eventDeckData && trim.eventDeckList) req.eventDeckData = trim.eventDeckList[trimIndex] || null;
+    }
     const explicitTutorial = isTutorialStageId(requestedStageId) || isTutorialDungeonId(requestedDungeonId);
     const diveGameLoad = req && Number(req.diveStageID || 0) > 0 ? worldMap.prepareDiveGameLoad(user, req) : null;
+    let exploreStage = null;
+    if (Number(req.exploreID || 0) > 0) {
+      try {
+        exploreStage = explore.prepareGameLoad(user, req, { resolveStage: ctx.getGenericStageForRequest });
+      } catch (_) {
+        return rejectGameLoad(ctx, socket, packet, "invalid-explore-game-load");
+      }
+    }
+    if (Number(req.exploreID || 0) > 0 && !exploreStage) return rejectGameLoad(ctx, socket, packet, "invalid-explore-game-load");
+    if (Number(req && req.diveStageID || 0) > 0 && !diveGameLoad) {
+      ctx.sendGameResponse(socket, packet, ctx.constants.GAME_LOAD_ACK,
+        Buffer.concat([writeSignedVarInt(1), writeNullObject(), writeObjectList([])]), "invalid-dive-game-load");
+      return true;
+    }
     let stage = null;
-    if (diveGameLoad) {
+    if (exploreStage) {
+      stage = exploreStage;
+    } else if (diveGameLoad) {
       const diveStage =
         (ctx.getGenericStageForRequest ? ctx.getGenericStageForRequest({ dungeonID: diveGameLoad.dungeonID }) : null) ||
         (ctx.getGenericStageForRequest
@@ -43,6 +83,10 @@ module.exports = {
         miscMode: "dive",
         diveStageID: diveGameLoad.diveStageID,
         diveDeckIndex: diveGameLoad.deckIndex,
+        diveUid: diveGameLoad.diveUid,
+        diveSlotSetIndex: diveGameLoad.diveSlotSetIndex,
+        diveSlotIndex: diveGameLoad.diveSlotIndex,
+        shipInitHp: diveGameLoad.shipInitHp,
         tutorial: false,
         cutsceneOnly: false,
       };
@@ -54,7 +98,7 @@ module.exports = {
     } else {
       stage = (explicitTutorial
         ? getTutorialStageForRequest({ stageID: requestedStageId, dungeonID: requestedDungeonId })
-        : getMainStoryStageForRequest({ stageID: requestedStageId, dungeonID: 0 })) ||
+        : getMainStoryStageForRequest(req)) ||
         getMainStoryStageForRequest(req) ||
         getTutorialStageForRequest(req) ||
         (ctx.getGenericStageForRequest ? ctx.getGenericStageForRequest(req) : null);
@@ -73,8 +117,17 @@ module.exports = {
       }
     }
     if (stage) {
+      if (!canLoadChainBattle(user, stage)) return rejectGameLoad(ctx, socket, packet, "invalid-chain-battle");
       req.stageID = stage.stageId;
       req.dungeonID = stage.dungeonID;
+      if (stage.miscMode === "phase") {
+        const phase = user && user.miscStages && user.miscStages.phase;
+        if (phase && Number(phase.stageId) === Number(stage.stageId) && Number(phase.phaseIndex) === Number(stage.phaseIndex)) {
+          stage.shipInitHp = phase.shipInitHp;
+          if (!req.eventDeckData) req.eventDeckData = phase.eventDeckData || null;
+          if (phase.deckIndex) req.selectDeckIndex = Number(phase.deckIndex.index || 0);
+        }
+      }
     }
     if (stage && stage.tutorial && user) {
       const expectedTutorialStage = getExpectedTutorialStageForUser(user);
@@ -108,10 +161,17 @@ module.exports = {
     const eventDeckPlayerUnitSlots = usesEventDeck ? getEventDeckPlayerUnitSlots(eventDeckId) : [];
     const eventDeckAllowsPlayerUnits = eventDeckPlayerUnitSlots.length > 0;
     const usesHybridEventDeck = eventDeckAllowsPlayerUnits && eventDeckHasGivenUnitSlots(eventDeckId);
-    let playerDeck = null;
-    if (stage && !stage.cutsceneOnly) {
+    let playerDeck = stage && stage.playerDeck || null;
+    if (stage && !stage.cutsceneOnly && !playerDeck) {
       if (stage.tutorial || (usesEventDeck && !eventDeckAllowsPlayerUnits)) {
         playerDeck = buildPlayerIdentityForGameLoad(user);
+      } else if (stage.miscMode === "trim" && req.eventDeckData) {
+        const selection = req.eventDeckData;
+        playerDeck = buildPlayerDeckForGameLoad(user, req, {
+          deckIndex: { deckType: 7, index: Math.max(0, (stage.trimStageList || []).findIndex((row) => Number(row.DungeonID) === Number(stage.dungeonID))) },
+          slotUnitUids: selection.units, shipUid: selection.shipUid,
+          operatorUid: selection.operatorUid, leaderIndex: selection.leaderIndex,
+        }) || buildPlayerIdentityForGameLoad(user);
       } else if (eventDeckAllowsPlayerUnits) {
         const eventDeckSelection = req && req.eventDeckData ? req.eventDeckData : null;
         playerDeck =
@@ -158,6 +218,7 @@ module.exports = {
     }
     if (!activeStage || activeStage.tutorial) ctx.maybeSendTutorialCutsceneClear(socket, packet.payload);
     if (ctx.config.DYNAMIC_BATTLE_MANAGER && activeStage && !activeStage.cutsceneOnly && ctx.sendDynamicGameLoadAck(socket, req, activeStage)) {
+      if (replay) replay.gameLoadRequestKey = requestKey;
       return true;
     }
     if (ctx.config.REPLAY_CAPTURED_GAME_FLOW && ctx.capturedGameFlow) {
@@ -168,6 +229,36 @@ module.exports = {
     return false;
   },
 };
+
+function rejectGameLoad(ctx, socket, packet, label) {
+  ctx.sendGameResponse(socket, packet, ctx.constants.GAME_LOAD_ACK,
+    Buffer.concat([writeSignedVarInt(1), writeNullObject(), writeObjectList([])]), label);
+  return true;
+}
+
+function canLoadChainBattle(user, stage) {
+  const saved = user && user.miscStages || {};
+  if (stage.miscMode === "phase") {
+    const phase = saved.phase;
+    if (phase && Number(phase.stageId) === Number(stage.stageId)) {
+      return Number(phase.phaseIndex) === Number(stage.phaseIndex) && Number(phase.dungeonId) === Number(stage.dungeonID);
+    }
+    return Number(stage.phaseIndex || 0) === 0;
+  }
+  if (stage.miscMode === "trim") {
+    const current = saved.trim && saved.trim.current;
+    if (current && Number(current.trimId) === Number(stage.trimId)) {
+      return Number(current.trimLevel) === Number(stage.trimLevel) && Number(current.nextDungeonId) === Number(stage.dungeonID);
+    }
+    return Number((stage.trimStageList && stage.trimStageList[0] || {}).DungeonID) === Number(stage.dungeonID);
+  }
+  if (stage.miscMode === "shadow") {
+    const palace = saved.shadow && saved.shadow.palaces && saved.shadow.palaces[String(stage.palaceID)];
+    if (palace) return Number(palace.currentDungeonId) === Number(stage.dungeonID);
+    return Number(stage.shadowBattleOrder || 1) === 1;
+  }
+  return true;
+}
 
 function buildPlayerIdentityForGameLoad(user) {
   if (!user) return null;

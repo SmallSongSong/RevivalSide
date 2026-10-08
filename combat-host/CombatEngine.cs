@@ -164,6 +164,7 @@ internal sealed class CombatEngine
 
         var dynamicGame = new DynamicGameState
         {
+            ShipInitHp = stage.ShipInitHp,
             StageID = stage.StageId != 0 ? stage.StageId : req.StageID,
             DungeonID = stage.DungeonID != 0 ? stage.DungeonID : req.DungeonID,
             RaidUID = stage.RaidUID != 0 ? stage.RaidUID : req.RaidUID,

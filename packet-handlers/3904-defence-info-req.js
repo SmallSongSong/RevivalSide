@@ -5,15 +5,11 @@ module.exports = {
   name: "DEFENCE_INFO_REQ",
   handle(ctx, socket, packet) {
     const req = decodeDefenceInfoReq(ctx, packet.payload);
-    if (ctx.config.REPLAY_CAPTURED_GAME_FLOW && ctx.capturedGameFlow) {
-      ctx.sendCapturedGameThroughPacketId(socket, ctx.constants.DEFENCE_INFO_ACK, "defence-info");
-      return true;
-    }
     ctx.sendGameResponse(
       socket,
       packet,
       ctx.constants.DEFENCE_INFO_ACK,
-      ctx.buildDefenceInfoAckPayload(req.defenceTempletId),
+      ctx.buildDefenceInfoAckPayload(req.defenceTempletId, socket.session && socket.session.user),
       "defence-info"
     );
     return true;

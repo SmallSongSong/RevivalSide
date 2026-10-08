@@ -1,5 +1,7 @@
 # RevivalSide
 
+This fork's Android gameplay test release and installation notes are documented in [Android local gameplay](docs/android-local-gameplay.md).
+
 RevivalSide is a local CounterSide revival research server. It includes the Node.js TCP listener, packet handlers, capture tooling, a C# combat-host bridge, and project-built combat-host binaries.
 
 This repository intentionally does not track client assets, raw packet captures, decompiled `Assembly-CSharp` source dumps, decrypted Lua bytecode, account databases, or raw game DLLs. Runtime gameplay tables can be loaded from the encrypted CounterSide install by deriving the script assets from the selected `Data\Managed` directory.

@@ -137,7 +137,7 @@ function ensureDefaultLineup(user, options = {}) {
 
 function buildPlayerDeckForGameLoad(user, req = {}, options = {}) {
   if (!user) return null;
-  const deckIndex = resolveDeckIndexForGameLoad(user, req);
+  const deckIndex = options.deckIndex || resolveDeckIndexForGameLoad(user, req);
   ensureDefaultLineup(user, deckIndex);
   const army = ensureArmy(user);
   const deck = ensureDeck(user, deckIndex);
@@ -198,9 +198,13 @@ function buildPlayerDeckForGameLoad(user, req = {}, options = {}) {
     shipUnitId: ship ? Number(ship.unitId || 0) : 0,
     shipLevel: ship ? Number(ship.level || 1) : 1,
     shipSkinId: ship ? Number(ship.skinId || 0) : 0,
+    shipLimitBreakLevel: ship ? Number(ship.limitBreakLevel || 0) : 0,
+    shipSkillLevels: ship ? normalizeSkillLevels(ship.skillLevels) : [],
+    shipCommandModules: ship ? normalizeShipCommandModules(ship.shipCommandModules || ship.shipModules) : [],
     operatorUid: operator ? String(toBigInt(operator.uid || operator.operatorUid || 0)) : "0",
     operatorId: operator ? Number(operator.id || operator.unitId || 0) : 0,
     operatorLevel: operator ? Number(operator.level || 1) : 1,
+    operatorData: operator ? JSON.parse(JSON.stringify(operator)) : null,
     equipItems,
     units,
   };
@@ -270,6 +274,7 @@ function buildDeckUnitSlotAssignments(deck, allowedUnitSlots, explicitSlotUnitUi
 
 function resolveDeckIndexForGameLoad(user, req = {}) {
   const index = normalizeDeckIndex(req.selectDeckIndex || 0);
+  if (Number(req.gameType || 0) === 25) return { deckType: DECK_TYPE_RAID, index };
   if (toBigInt(req.raidUID || req.raidUid || 0) > 0n) return { deckType: DECK_TYPE_RAID, index };
   if (Number(req.diveStageID || 0) > 0) return { deckType: DECK_TYPE_DIVE, index };
   if (Number(req.exploreID || 0) > 0) return { deckType: DECK_TYPE_EXPLORE, index };
@@ -309,6 +314,8 @@ function buildPlayerDeckUnit(unit, slotIndex) {
     tacticLevel: Number(unit.tacticLevel || 0),
     tacticGroup: Number(templet.m_TacticGroup || 0),
     skillLevels: normalizeSkillLevels(unit.skillLevels),
+    statExp: normalizeFixedArray(unit.statExp, 6, 0),
+    reactorLevel: Number(unit.reactorLevel || 0),
     equipItemUids: normalizeFixedArray(unit.equipItemUids, 4, 0).map((uid) => String(toBigInt(uid || 0))),
   };
 }

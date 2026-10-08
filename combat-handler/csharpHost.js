@@ -4,6 +4,9 @@ const fs = require("fs");
 const path = require("path");
 const { Worker } = require("worker_threads");
 
+const RESPONSE_FILE_MARKER = "__revivalsideCombatHostResponseFile";
+const RESPONSE_FILE_PREFIX = "revivalside-combat-host-response-";
+
 // Thin process bridge to the C# combat host.
 //
 // The listener is still synchronous, so this bridge intentionally uses a
@@ -23,6 +26,9 @@ function createCsharpCombatHost(options = {}) {
   const dotnetPath = options.dotnetPath || findPreferredDotnetRuntime(managedDir);
   const buildDotnetPath = options.buildDotnetPath || process.env.CS_DOTNET_BUILD_PATH || "dotnet";
   const responseBufferBytes = Number(options.responseBufferBytes || 16 * 1024 * 1024);
+  const responseFileDir = path.resolve(
+    options.responseFileDir || process.env.CS_CSHARP_COMBAT_HOST_RESPONSE_FILE_DIR || path.join(process.cwd(), ".cache", "combat-host-responses")
+  );
   let ready = false;
   let lastError = "";
   let worker = null;
@@ -65,9 +71,10 @@ function createCsharpCombatHost(options = {}) {
     ready = fs.existsSync(dllPath);
     if (!ready) lastError = `missing combat host dll: ${dllPath}`;
     if (ready && !worker) {
+      fs.mkdirSync(responseFileDir, { recursive: true });
       const runDirectly = /\.exe$/i.test(dllPath);
       const hostWorker = new Worker(path.join(__dirname, "csharpHostWorker.js"), {
-        workerData: { hostPath: dllPath, dotnetPath, runDirectly, modTablesDir },
+        workerData: { hostPath: dllPath, dotnetPath, runDirectly, modTablesDir, responseFileDir, responseFilePrefix: RESPONSE_FILE_PREFIX },
       });
       worker = hostWorker;
       workerDllPath = dllPath;
@@ -154,7 +161,32 @@ function createCsharpCombatHost(options = {}) {
     }
     const length = Atomics.load(header, 1);
     const stdout = Buffer.from(sharedBuffer, 8, length).toString("utf8");
-    return parseHostResponse(stdout);
+    return parseHostResponse(readSpilledResponse(stdout));
+  }
+
+  function readSpilledResponse(stdout) {
+    let marker;
+    try {
+      marker = JSON.parse(stdout);
+    } catch (_) {
+      return stdout;
+    }
+    const responseFile = marker && marker[RESPONSE_FILE_MARKER];
+    if (!responseFile) return stdout;
+
+    const resolved = path.resolve(String(responseFile));
+    if (path.dirname(resolved) !== responseFileDir || !path.basename(resolved).startsWith(RESPONSE_FILE_PREFIX)) {
+      return JSON.stringify({ ok: false, error: "combat host returned an invalid response spill path" });
+    }
+    try {
+      return fs.readFileSync(resolved, "utf8");
+    } catch (err) {
+      return JSON.stringify({ ok: false, error: `combat host response spill could not be read: ${err.message}` });
+    } finally {
+      try {
+        fs.unlinkSync(resolved);
+      } catch (_) {}
+    }
   }
 
   function readModRuntime() {

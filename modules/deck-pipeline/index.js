@@ -50,6 +50,10 @@ function createDeckPipelineHandlers() {
 }
 
 function buildResponse(user, packetId, req) {
+  if (Number(req.deckIndex && req.deckIndex.deckType) === 10 && user.localExplore && user.localExplore.squad) {
+    const response = require("../explore").buildExploreDeckResponse(user, packetId, req, buildResponse);
+    if (response) return response;
+  }
   switch (packetId) {
     case 1600: {
       const result = swapDeckUnits(user, req.deckIndex, req.slotIndexFrom, req.slotIndexTo);

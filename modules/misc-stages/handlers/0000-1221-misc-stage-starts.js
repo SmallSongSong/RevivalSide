@@ -3,8 +3,10 @@ const {
   readSignedVarLong,
   readSignedVarIntList,
   readBool,
+  readVarInt,
 } = require("../../packet-codec");
 const { buildPlayerDeckForGameLoad } = require("../../unit");
+const { getEventDeckPlayerUnitSlots, eventDeckHasFreeShipSlot } = require("../../game-data");
 
 const SHADOW_PALACE_START_ACK = 1222;
 const PHASE_START_ACK = 1228;
@@ -158,7 +160,7 @@ module.exports = [
     packetId: 3900,
     name: "DEFENCE_GAME_START_REQ",
     handle(ctx, socket, packet) {
-      const req = decodeSingleIntReq(ctx, packet.payload, "defenceTempletId");
+      const req = decodeDefenceStartReq(ctx, packet.payload);
       const stage = ctx.getGenericStageForRequest ? ctx.getGenericStageForRequest({ defenceTempletId: req.defenceTempletId }) : null;
       const user = socket.session && socket.session.user;
       const loadReq = {
@@ -166,12 +168,21 @@ module.exports = [
         stageID: Number((stage && stage.stageId) || 0),
         dungeonID: Number((stage && stage.dungeonID) || 0),
         defenceTempletId: req.defenceTempletId,
+        eventDeckData: req.eventDeckData,
       };
+      const eventDeckId = Number(stage && (stage.eventDeckId || stage.EventDeckId) || 0);
+      const playerSlots = eventDeckId ? getEventDeckPlayerUnitSlots(eventDeckId) : [];
       const playerDeck = stage && !stage.cutsceneOnly
-        ? buildPlayerDeckForGameLoad(user, loadReq) || buildPlayerIdentityForGameLoad(user)
+        ? buildPlayerDeckForGameLoad(user, loadReq, {
+            allowedUnitSlots: eventDeckId ? playerSlots : undefined,
+            slotUnitUids: req.eventDeckData && req.eventDeckData.units,
+            shipUid: req.eventDeckData && req.eventDeckData.shipUid,
+            operatorUid: req.eventDeckData && req.eventDeckData.operatorUid,
+            leaderIndex: req.eventDeckData && req.eventDeckData.leaderIndex,
+          }) || buildPlayerIdentityForGameLoad(user)
         : null;
       const payload = ctx.buildDefenceGameStartAckPayload(socket, loadReq, {
-        stage: stage && playerDeck ? { ...stage, playerDeck } : stage,
+        stage: stage && playerDeck ? { ...stage, playerDeck, eventDeckFreeUnitSlots: playerSlots, eventDeckFreeShipSlot: eventDeckHasFreeShipSlot(eventDeckId) } : stage,
       });
       ctx.sendGameResponse(socket, packet, DEFENCE_GAME_START_ACK, payload, "defence-game-start");
       return true;
@@ -192,13 +203,21 @@ function decodePhaseStartReq(ctx, payload) {
   try {
     const decrypted = ctx.decryptCopy(payload);
     const stageId = readSignedVarInt(decrypted, 0);
-    let supportingUserUid = 0n;
-    try {
-      supportingUserUid = readSignedVarLong(decrypted, Math.max(stageId.offset, decrypted.length - 10)).value;
-    } catch (_) {
-      supportingUserUid = 0n;
+    let offset = stageId.offset;
+    let deckIndex = null;
+    if (readBool(decrypted, offset++).value) {
+      const deckType = readSignedVarInt(decrypted, offset);
+      offset = deckType.offset;
+      deckIndex = { deckType: deckType.value, index: decrypted.readUInt8(offset++) };
     }
-    return { stageId: stageId.value, supportingUserUid };
+    let eventDeckData = null;
+    if (readBool(decrypted, offset++).value) {
+      const eventDeck = ctx.readNkmEventDeckData(decrypted, offset);
+      eventDeckData = eventDeck.value;
+      offset = eventDeck.offset;
+    }
+    const supportingUserUid = readSignedVarLong(decrypted, offset).value;
+    return { stageId: stageId.value, supportingUserUid, deckIndex, eventDeckData };
   } catch (_) {
     return { stageId: 0, supportingUserUid: 0n };
   }
@@ -209,9 +228,30 @@ function decodeTrimStartReq(ctx, payload) {
     const decrypted = ctx.decryptCopy(payload);
     const trimId = readSignedVarInt(decrypted, 0);
     const trimLevel = readSignedVarInt(decrypted, trimId.offset);
-    return { trimId: trimId.value, trimLevel: trimLevel.value };
+    let offset = trimLevel.offset;
+    const count = readVarInt(decrypted, offset);
+    offset = count.offset;
+    const eventDeckList = [];
+    for (let index = 0; index < count.value; index++) {
+      if (!readBool(decrypted, offset++).value) { eventDeckList.push(null); continue; }
+      const parsed = ctx.readNkmEventDeckData(decrypted, offset);
+      eventDeckList.push(parsed.value);
+      offset = parsed.offset;
+    }
+    return { trimId: trimId.value, trimLevel: trimLevel.value, eventDeckList };
   } catch (_) {
     return { trimId: 0, trimLevel: 1 };
+  }
+}
+
+function decodeDefenceStartReq(ctx, payload) {
+  try {
+    const decrypted = ctx.decryptCopy(payload);
+    const id = readSignedVarInt(decrypted, 0);
+    const eventDeckData = readBool(decrypted, id.offset).value ? ctx.readNkmEventDeckData(decrypted, id.offset + 1).value : null;
+    return { defenceTempletId: id.value, eventDeckData };
+  } catch (_) {
+    return { defenceTempletId: 0, eventDeckData: null };
   }
 }
 

@@ -63,6 +63,7 @@ const {
 } = require("../equipment");
 const { grantMiscItem, spendMiscItem } = require("../inventory");
 const { grantRewardByType, createEmptyReward, grantChoiceItemReward } = require("../reward");
+const { isItemUseAllowed, NEC_FAIL_INSUFFICIENT_ITEM } = require("../item");
 const { addMissionTrackingCondition, completeMissionTracking, makeMissionTracking } = require("../mission-tracking");
 
 const EQUIP_PACKET_IDS = [
@@ -84,7 +85,7 @@ function createEquipmentPipelineHandlers() {
       if (socket.session) socket.session.user = user;
       const request = decodeRequest(ctx, packetId, packet.payload);
       const response = buildResponse(ctx, user, packetId, request);
-      const missionTracking = trackEquipmentMission(ctx, user, packetId, request);
+      const missionTracking = response.succeeded === false ? null : trackEquipmentMission(ctx, user, packetId, request);
       console.log(`[equipment:${packetId}] ACK packetId=${response.packetId} payloadSize=${response.payload.length}`);
       for (const preResponse of response.preResponses || []) {
         ctx.sendResponse(socket, packet.sequence, preResponse.packetId, () =>
@@ -351,16 +352,19 @@ function removeAck(user, req) {
 
 function randomBoxAck(ctx, user, req) {
   const itemId = Number(req.itemID || req.itemId || 0);
-  const count = Math.max(1, Number(req.count || 1));
-  const costItem = itemId > 0 ? spendMiscItem(user, itemId, count, { regDate: now(ctx) }) : null;
-  const reward = grantRewardByType(ctx, user, "RT_MISC", itemId, count, count, 0, {
+  const count = Number(req.count);
+  const succeeded = isItemUseAllowed(user, itemId, count);
+  const costItem = succeeded ? spendMiscItem(user, itemId, count, { regDate: now(ctx) }) : null;
+  const reward = succeeded ? grantRewardByType(ctx, user, "RT_MISC", itemId, count, count, 0, {
     expandPackages: true,
+    openRandomBoxes: true,
     regDate: now(ctx),
-  });
+  }) : createEmptyReward();
   return {
     packetId: 1009,
+    succeeded,
     payload: Buffer.concat([
-      writeSignedVarInt(0),
+      writeSignedVarInt(succeeded ? 0 : NEC_FAIL_INSUFFICIENT_ITEM),
       writeNullableObject(buildRewardData(reward)),
       writeNullableObjectOrNull(costItem ? buildItemMiscData(costItem) : null),
     ]),
@@ -474,19 +478,21 @@ function statBonusConfirmAck(user, req) {
 function choiceItemAck(ctx, user, req) {
   const itemId = Number(req.itemId || 0);
   const rewardId = Number(req.rewardId || 0);
-  const count = Math.max(1, Number(req.count || 1));
-  const costItem = itemId > 0 ? spendMiscItem(user, itemId, count, { regDate: now(ctx) }) : null;
-  const reward = grantChoiceItemReward(ctx, user, itemId, rewardId, count, {
+  const count = Number(req.count);
+  const succeeded = isItemUseAllowed(user, itemId, count, { rewardId });
+  const costItem = succeeded ? spendMiscItem(user, itemId, count, { regDate: now(ctx) }) : null;
+  const reward = succeeded ? grantChoiceItemReward(ctx, user, itemId, rewardId, count, {
     expandPackages: true,
     regDate: now(ctx),
     rewardId,
     setOptionId: Number(req.setOptionId || 0),
     subSkillId: Number(req.subSkillId || 0),
-  });
+  }) : createEmptyReward();
   return {
     packetId: 1027,
+    succeeded,
     payload: Buffer.concat([
-      writeSignedVarInt(0),
+      writeSignedVarInt(succeeded ? 0 : NEC_FAIL_INSUFFICIENT_ITEM),
       writeNullableObjectOrNull(costItem ? buildItemMiscData(costItem) : null),
       writeNullableObject(buildRewardData(reward)),
     ]),

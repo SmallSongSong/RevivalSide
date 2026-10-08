@@ -12,6 +12,16 @@ module.exports = {
 
     const replay = socket.session && socket.session.gameReplay;
     if (!replay || !replay.dynamicGame) return true;
+    if (replay.dynamicGame.miscMode === "defence" && typeof ctx.sendDefenceGameEnd === "function") {
+      ctx.sendDefenceGameEnd(socket, { giveup: true });
+      if (typeof ctx.abandonDynamicBattle === "function") ctx.abandonDynamicBattle(socket, "defence-giveup");
+      return true;
+    }
+    if (replay.dynamicGame.miscMode === "local-pvp" && typeof ctx.sendLocalPvpGameEnd === "function") {
+      ctx.sendLocalPvpGameEnd(socket, { giveup: true });
+      if (typeof ctx.abandonDynamicBattle === "function") ctx.abandonDynamicBattle(socket, "local-pvp-giveup");
+      return true;
+    }
     const battleState = replay.battleState || {};
     battleState.finished = true;
     battleState.win = false;

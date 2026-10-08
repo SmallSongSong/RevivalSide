@@ -1,0 +1,18 @@
+[
+  {
+    "key": "evolved",
+    "name": "BOT · Evolved-001",
+    "friendCode": "900000002",
+    "shipUnitId": 26036,
+    "unitIds": [1190, 1012, 1187, 1188, 1068, 1219, 1061, 2042],
+    "sources": ["https://www.prydwen.gg/counter-side/guides/evolved-playbook/", "https://docs.google.com/document/d/1j5DyHPH3IAMIWkmhrgetf5ClJG1GNcDNGPhNUHiv3oU/edit"]
+  },
+  {
+    "key": "siege",
+    "name": "BOT · Goliath Siege",
+    "friendCode": "900000003",
+    "shipUnitId": 26036,
+    "unitIds": [1210, 1082, 1079, 1154, 2118, 1205, 1196, 1067],
+    "sources": ["https://www.prydwen.gg/counter-side/guides/siege-playbook/", "https://docs.google.com/document/d/1SJJyj-8KrzUq0Sdy8mW2P1y2I15S4OQRJqlmBaxMWIQ/edit"]
+  }
+]

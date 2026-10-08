@@ -21,6 +21,7 @@ const {
   getMiscItemTemplet,
   getUnitTemplet,
   getEquipTemplet,
+  isUsableEquipTemplet,
   getAllEquipRandomStatRecords,
   getEquipSetOption,
   getEquipSetOptionIds,
@@ -36,7 +37,7 @@ const {
   getAllSkinIds,
   getAllEmoticonIds,
 } = require("../game-data");
-const { validateEquipCustomSubstats } = require("../equipment");
+const { validateEquipCustomSubstats, ensureEquipInventory } = require("../equipment");
 const worldMap = require("../world-map");
 
 const PACKETS = Object.freeze({
@@ -338,6 +339,12 @@ function handleAdminCommand(ctx, user, messageText) {
     const topic = String(tokens.shift() || "").toLowerCase();
     return { reply: topic === "gear" ? gearHelpText() : adminHelpText(), createdPosts: 0 };
   }
+  if (command === "repair" && normalizeKind(tokens[0]) === "gear") {
+    const before = Object.keys(user.inventory && user.inventory.quarantinedEquips || {}).length;
+    const inventory = ensureEquipInventory(user);
+    const total = Object.keys(inventory.quarantinedEquips || {}).length;
+    return { reply: `Quarantined ${total - before} unsupported gear entries (${total} preserved in save backup). Re-enter the lobby to refresh inventory.`, createdPosts: 0 };
+  }
   if (command === "clear") {
     const subcommand = String(tokens[0] || "").trim().toLowerCase();
     if (subcommand === "inventory" || subcommand === "invent" || subcommand === "items" || subcommand === "item") {
@@ -599,6 +606,9 @@ function parseGiveCommand(tokens, user = null) {
   if (!type) return { ok: false, error: `Unknown reward kind "${kind}".\n${adminHelpText()}` };
   const id = resolveRewardId(kind, idText);
   if (!Number.isInteger(id) || id <= 0) return { ok: false, error: `Invalid ${kind} id: ${idText}` };
+  if (normalizeKind(kind) === "gear" && getEquipTemplet(id) && !isUsableEquipTemplet(getEquipTemplet(id))) {
+    return { ok: false, error: `Gear id ${id} is a test or unsupported equipment entry.` };
+  }
   if (!rewardIdExists(type, id) && !(normalizeKind(kind) === "currency" && Object.values(RESOURCE_ITEM_IDS).includes(id))) {
     return { ok: false, error: `No ${kind} id ${id} exists in local tables.` };
   }
@@ -1984,7 +1994,7 @@ function rewardIdExists(rewardType, id) {
     case "RT_OPERATOR":
       return Boolean(getUnitTemplet(id));
     case "RT_EQUIP":
-      return Boolean(getEquipTemplet(id));
+      return isUsableEquipTemplet(getEquipTemplet(id));
     case "RT_SKIN":
       return Boolean(getSkinTemplet(id));
     case "RT_EMOTICON":
@@ -2184,6 +2194,7 @@ function adminHelpText() {
     "/give emoticon <id>",
     "/give all items|units|trophies|ships|operators|gears|skins|emoticons [count]",
     "/give everything [count]",
+    "/repair gears (preserve unsupported gear in save backup and refresh inventory)",
     "/raid level <level> branch <branch>",
     "/sephira branch <branch>",
     "/raid kill branch <branch>",
@@ -2255,6 +2266,7 @@ function isAdminCommand(message) {
     text.startsWith("/servertime") ||
     text.startsWith("/server-time") ||
     text.startsWith("/clear") ||
+    text.startsWith("/repair") ||
     text === "/help"
   );
 }

@@ -1,5 +1,12 @@
 const { parentPort, workerData } = require("worker_threads");
 const { spawn } = require("child_process");
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+
+const RESPONSE_FILE_MARKER = "__revivalsideCombatHostResponseFile";
+const responseFileDir = path.resolve(String(workerData.responseFileDir || process.cwd()));
+const responseFilePrefix = String(workerData.responseFilePrefix || "revivalside-combat-host-response-");
 
 let child = null;
 let stdoutBuffer = "";
@@ -63,15 +70,19 @@ function startChild() {
 function complete(sharedBuffer, text) {
   const header = new Int32Array(sharedBuffer, 0, 2);
   const bytes = Buffer.from(sharedBuffer, 8);
-  const payload = Buffer.from(String(text), "utf8");
+  let payload = Buffer.from(String(text), "utf8");
   if (payload.length > bytes.length) {
-    const error = Buffer.from(JSON.stringify({ ok: false, error: "C# combat host response exceeded shared buffer" }), "utf8");
-    error.copy(bytes, 0, 0, Math.min(error.length, bytes.length));
-    Atomics.store(header, 1, Math.min(error.length, bytes.length));
-  } else {
-    payload.copy(bytes, 0);
-    Atomics.store(header, 1, payload.length);
+    try {
+      fs.mkdirSync(responseFileDir, { recursive: true });
+      const responseFile = path.join(responseFileDir, `${responseFilePrefix}${process.pid}-${crypto.randomUUID()}.json`);
+      fs.writeFileSync(responseFile, payload);
+      payload = Buffer.from(JSON.stringify({ [RESPONSE_FILE_MARKER]: responseFile }), "utf8");
+    } catch (err) {
+      payload = Buffer.from(JSON.stringify({ ok: false, error: `combat host response spill failed: ${err.message}` }), "utf8");
+    }
   }
+  payload.copy(bytes, 0, 0, Math.min(payload.length, bytes.length));
+  Atomics.store(header, 1, Math.min(payload.length, bytes.length));
   Atomics.store(header, 0, 1);
   Atomics.notify(header, 0, 1);
 }

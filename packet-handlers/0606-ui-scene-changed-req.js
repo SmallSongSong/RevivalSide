@@ -1,5 +1,7 @@
 const { readSignedVarInt } = require("../modules/packet-codec");
 
+const localPvp = require("../modules/local-pvp");
+
 const NSI_GAME = 3;
 const NSI_OPERATION = 9;
 
@@ -14,6 +16,10 @@ module.exports = {
     const replay = socket.session && socket.session.gameReplay;
     const previousSceneId = replay ? Number(replay.lastSceneId || 0) : 0;
     if (replay) replay.lastSceneId = sceneId;
+    if (localPvp.isLocalPvpReplay(replay) && !replay.loadCompleteReceived && [26, 27].includes(sceneId)) {
+      if (sceneId === 26) localPvp.notifyMatchReady(ctx, socket);
+      return true;
+    }
     if (
       ctx.config.DYNAMIC_BATTLE_MANAGER &&
       replay &&

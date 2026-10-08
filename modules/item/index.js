@@ -5,18 +5,20 @@ const {
   buildItemMiscData,
   buildRewardData,
   readSignedVarInt,
+  toBigInt,
 } = require("../packet-codec");
 const { getMiscItemTemplet } = require("../game-data");
 const { spendMiscItem } = require("../inventory");
-const { grantRewardByType, createEmptyReward, grantChoiceItemReward } = require("../reward");
+const { grantRewardByType, createEmptyReward, grantChoiceItemReward, getChoiceRewardRecords } = require("../reward");
 const { completeMissionTracking, makeMissionTracking, addMissionTrackingCondition } = require("../mission-tracking");
 
 const PACKETS = Object.freeze({
-  RANDOM_ITEM_BOX_OPEN_REQ: 1007,
-  RANDOM_ITEM_BOX_OPEN_ACK: 1008,
-  CHOICE_ITEM_USE_REQ: 1025,
-  CHOICE_ITEM_USE_ACK: 1026,
+  RANDOM_ITEM_BOX_OPEN_REQ: 1008,
+  RANDOM_ITEM_BOX_OPEN_ACK: 1009,
+  CHOICE_ITEM_USE_REQ: 1026,
+  CHOICE_ITEM_USE_ACK: 1027,
 });
+const NEC_FAIL_INSUFFICIENT_ITEM = 111;
 
 function createItemHandler(packetId, name) {
   return {
@@ -30,7 +32,7 @@ function createItemHandler(packetId, name) {
         packetId === PACKETS.RANDOM_ITEM_BOX_OPEN_REQ
           ? buildRandomItemBoxOpenAck(ctx, user, request)
           : buildChoiceItemUseAck(ctx, user, request);
-      const missionTracking = trackItemUseMission(ctx, user, request);
+      const missionTracking = response.succeeded === false ? null : trackItemUseMission(ctx, user, request);
       console.log(`[item:${name}] ACK packetId=${response.packetId} itemId=${request.itemId || request.itemID || 0} count=${request.count || 1}`);
       ctx.sendResponse(socket, packet.sequence, response.packetId, () =>
         ctx.buildEncryptedPacket(packet.sequence, response.packetId, response.payload)
@@ -61,17 +63,19 @@ function trackItemUseMission(ctx, user, request = {}) {
 
 function buildRandomItemBoxOpenAck(ctx, user, request) {
   const itemId = Number(request.itemId || request.itemID || 0);
-  const count = Math.max(1, Number(request.count || 1));
-  const costItem = itemId > 0 ? spendMiscItem(user, itemId, count, { regDate: now(ctx) }) : null;
-  const reward = grantRewardByType(ctx, user, "RT_MISC", itemId, count, count, 0, {
+  const count = Number(request.count);
+  const succeeded = isItemUseAllowed(user, itemId, count);
+  const costItem = succeeded ? spendMiscItem(user, itemId, count, { regDate: now(ctx) }) : null;
+  const reward = succeeded ? grantRewardByType(ctx, user, "RT_MISC", itemId, count, count, 0, {
     expandPackages: true,
     openRandomBoxes: true,
     regDate: now(ctx),
-  });
+  }) : createEmptyReward();
   return {
     packetId: PACKETS.RANDOM_ITEM_BOX_OPEN_ACK,
+    succeeded,
     payload: Buffer.concat([
-      writeSignedVarInt(0),
+      writeSignedVarInt(succeeded ? 0 : NEC_FAIL_INSUFFICIENT_ITEM),
       writeNullableObject(buildRewardData(reward)),
       writeNullableObjectOrNull(costItem ? buildItemMiscData(costItem) : null),
     ]),
@@ -81,9 +85,10 @@ function buildRandomItemBoxOpenAck(ctx, user, request) {
 function buildChoiceItemUseAck(ctx, user, request) {
   const itemId = Number(request.itemId || 0);
   const rewardId = Number(request.rewardId || 0);
-  const count = Math.max(1, Number(request.count || 1));
-  const costItem = itemId > 0 ? spendMiscItem(user, itemId, count, { regDate: now(ctx) }) : null;
-  const reward = itemId > 0
+  const count = Number(request.count);
+  const succeeded = isItemUseAllowed(user, itemId, count, { rewardId });
+  const costItem = succeeded ? spendMiscItem(user, itemId, count, { regDate: now(ctx) }) : null;
+  const reward = succeeded
     ? grantChoiceItemReward(ctx, user, itemId, rewardId, count, {
         expandPackages: true,
         regDate: now(ctx),
@@ -97,12 +102,30 @@ function buildChoiceItemUseAck(ctx, user, request) {
     : createEmptyReward();
   return {
     packetId: PACKETS.CHOICE_ITEM_USE_ACK,
+    succeeded,
     payload: Buffer.concat([
-      writeSignedVarInt(0),
+      writeSignedVarInt(succeeded ? 0 : NEC_FAIL_INSUFFICIENT_ITEM),
       writeNullableObjectOrNull(costItem ? buildItemMiscData(costItem) : null),
       writeNullableObject(buildRewardData(reward)),
     ]),
   };
+}
+
+function isItemUseAllowed(user, itemId, count, options = {}) {
+  if (!user || !Number.isSafeInteger(count) || count <= 0) return false;
+  const templet = getMiscItemTemplet(itemId);
+  const type = String(templet && templet.m_ItemMiscType || "");
+  if (Object.prototype.hasOwnProperty.call(options, "rewardId")) {
+    if (!type.startsWith("IMT_CHOICE_") || !Number.isInteger(options.rewardId) || options.rewardId <= 0
+      || !getChoiceRewardRecords(itemId).some((record) => Number(record.m_RewardID) === options.rewardId)) return false;
+  } else if (!["IMT_RANDOMBOX", "IMT_PACKAGE", "IMT_CUSTOM_PACKAGE", "IMT_CONTRACT"].includes(type)) {
+    return false;
+  }
+  // Read balances without initializing inventory so rejected requests leave the save untouched.
+  const item = user.inventory && user.inventory.misc && user.inventory.misc[String(itemId)];
+  const free = toBigInt(item && (item.countFree != null ? item.countFree : item.count) || 0);
+  const paid = toBigInt(item && item.countPaid || 0);
+  return (free > 0n ? free : 0n) + (paid > 0n ? paid : 0n) >= BigInt(count);
 }
 
 function getChoiceRewardType(itemId) {
@@ -192,5 +215,7 @@ function now(ctx) {
 
 module.exports = {
   PACKETS,
+  NEC_FAIL_INSUFFICIENT_ITEM,
   createItemHandler,
+  isItemUseAllowed,
 };

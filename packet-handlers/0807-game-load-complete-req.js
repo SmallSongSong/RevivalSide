@@ -2,6 +2,8 @@ module.exports = {
   packetId: 807,
   name: "GAME_LOAD_COMPLETE_REQ",
   handle(ctx, socket) {
+    const current = socket.session.gameReplay;
+    if (current.loadCompleteReceived && current.dynamicGame && current.dynamicGame.initialUnitsSent) return true;
     socket.session.gameReplay.loadCompleteReceived = true;
     if (ctx.isTutorialCapturedBootstrapActive(socket)) {
       if (ctx.sendCapturedTutorialLoadCompleteBootstrap(socket, "tutorial-load-complete")) return true;

@@ -749,9 +749,18 @@ function getEquipTemplet(equipId) {
   return loadGameData().equipById.get(Number(equipId)) || null;
 }
 
+function isUsableEquipTemplet(record, options = {}) {
+  if (!record || !Number.isInteger(Number(record.m_ItemEquipID)) || Number(record.m_ItemEquipID) <= 0) return false;
+  if (options.includeTestEquipment !== true && /(?:^|_)TEST(?:_|$)/i.test(String(record.m_ItemEquipStrID || ""))) return false;
+  return ["IEP_WEAPON", "IEP_DEFENCE", "IEP_ACC", "IEP_ENCHANT"].includes(record.m_ItemEquipPosition)
+    && ["NUST_COUNTER", "NUST_SOLDIER", "NUST_MECHANIC", "NUST_ENCHANT"].includes(record.m_EquipUnitStyleType)
+    && Boolean(record.m_ItemEquipName && record.m_ItemEquipIconName);
+}
+
 function getAllEquipIds(options = {}) {
   const includeEnchantModules = options.includeEnchantModules === true;
   return Array.from(loadGameData().equipById.values())
+    .filter((record) => isUsableEquipTemplet(record, options))
     .filter((record) => includeEnchantModules || String(record.m_ItemEquipPosition || "") !== "IEP_ENCHANT")
     .map((record) => Number(record.m_ItemEquipID))
     .filter((id) => Number.isInteger(id) && id > 0)
@@ -1232,6 +1241,7 @@ module.exports = {
   getAcqPackageRewards,
   getRewardGroupRecords,
   getEquipTemplet,
+  isUsableEquipTemplet,
   getAllEquipIds,
   getRandomEquipId,
   getEquipRandomStatRecords,

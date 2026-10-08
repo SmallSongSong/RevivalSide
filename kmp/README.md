@@ -60,6 +60,52 @@ The tool patches both the fixed-width IL2CPP endpoint and Gamebase's launching r
 
 ## Build And Run
 
+### Local fork test releases
+
+The local fork uses version `0.4.1-local.1` (`versionCode=5`). This release retains
+the verified upstream Android `v0.4.0a` shell: DEX classes, resources, native
+libraries, and game data. It rebuilds the shared listener archive from current
+fork sources and compiles the managed combat host from current C# sources.
+This preserves the released capture relay, automatic profile import on returning
+to the companion, client detection, and streaming save export hotfixes.
+
+With Python 3.9+, Node.js, .NET 8, Java 17, and Android SDK 36 available:
+
+```sh
+# Configure the four signing variables described below, then:
+tools/build-android-local-release.sh \
+  exports/upstream-android/RevivalSide-Android-v0.4.0a.apk
+```
+
+Commit or stage new runtime files before packaging: this path overlays tracked
+files, refuses untracked runtime files, removes obsolete shared handlers, and never
+copies local account databases or `.env`. It retains the upstream starter profile
+and external content contract.
+The script replaces `CombatHost.dll` for both Android ABIs; the existing .NET 8
+runtime manifests remain compatible because the host targets `net8.0` and keeps
+the same `Mono.Cecil 0.11.5` dependency. The packager updates the binary manifest
+version, removes the upstream APK signature, aligns the archive, and signs it
+with the fork key. Source, host, archive, DEX, resource, manifest, and native
+hashes are recorded in `exports/android-local-build.json` and checked against
+the finished APK.
+
+Configure the `REVIVALSIDE_ANDROID_KEYSTORE`, `REVIVALSIDE_ANDROID_KEY_ALIAS`,
+`REVIVALSIDE_ANDROID_KEYSTORE_PASSWORD`, and `REVIVALSIDE_ANDROID_KEY_PASSWORD`
+environment variables for a signed release. A fork test key differs from the
+upstream signing key, so Android cannot install it over an upstream-signed app.
+Preserve existing app data before changing signing identities. The patched
+CounterSide client and matching external payload ZIP remain separate prerequisites.
+
+After configuring those signing variables and `ANDROID_HOME`,
+`tools/build-android-local-release.sh` performs the complete publish, staging,
+shell repack, signing, asset hash comparison, and APK signature verification. Set
+`DOTNET_BIN` if .NET is outside `PATH`. Keep the signing keystore private and reuse
+it for subsequent fork updates.
+
+The repository's Kotlin frontend source predates several changes in the released
+shell. Future frontend work must first align that source with `v0.4.0a` behavior.
+This release uses the inherited shell explicitly and reports that build mode.
+
 Refresh the bundled Node runtime when needed:
 
 ```powershell

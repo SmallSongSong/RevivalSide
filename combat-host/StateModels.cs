@@ -21,6 +21,7 @@ public sealed class GameLoadReq
 
 public sealed class StageData
 {
+    public double? ShipInitHp { get; set; }
     public int StageId { get; set; }
     public int DungeonID { get; set; }
     public long RaidUID { get; set; }
@@ -57,6 +58,7 @@ public sealed class StageData
     public List<List<int>> DeployableGameUnitUIDGroups { get; set; } = [];
     public List<int> EventDeckFreeUnitSlots { get; set; } = [];
     public PlayerDeckData? PlayerDeck { get; set; }
+    public PlayerDeckData? EnemyDeck { get; set; }
 }
 
 public sealed class PlayerDeckData
@@ -72,9 +74,13 @@ public sealed class PlayerDeckData
     public int ShipUnitId { get; set; }
     public int ShipLevel { get; set; } = 1;
     public int ShipSkinId { get; set; }
+    public int ShipLimitBreakLevel { get; set; }
+    public List<int> ShipSkillLevels { get; set; } = [];
+    public System.Text.Json.JsonElement ShipCommandModules { get; set; }
     public string OperatorUid { get; set; } = "0";
     public int OperatorId { get; set; }
     public int OperatorLevel { get; set; } = 1;
+    public OfficialOperatorSnapshot? OperatorData { get; set; }
     public List<PlayerEquipItemData> EquipItems { get; set; } = [];
     public List<PlayerUnitData> Units { get; set; } = [];
 }
@@ -127,11 +133,16 @@ public sealed class PlayerUnitData
     public int TacticLevel { get; set; }
     public int TacticGroup { get; set; }
     public List<int> SkillLevels { get; set; } = [];
+    public List<int> StatExp { get; set; } = [];
+    public int ReactorLevel { get; set; }
     public List<string> EquipItemUids { get; set; } = [];
 }
 
 public sealed class DynamicGameState
 {
+    public string LocalPvpStartPayloadBase64 { get; set; } = "";
+    public int LocalPvpGameType { get; set; }
+    public double? ShipInitHp { get; set; }
     public int StageID { get; set; }
     public int DungeonID { get; set; }
     public long RaidUID { get; set; }
@@ -187,6 +198,9 @@ public sealed class UnitPool
 
 public sealed class BattleState
 {
+    public double DiveShipCurHp { get; set; }
+    public double DiveShipMaxHp { get; set; }
+    public double ShipHpDamagePercent { get; set; }
     public int StageId { get; set; }
     public long GameUID { get; set; }
     public List<UnitState> Units { get; set; } = [];

@@ -1053,6 +1053,7 @@ internal static class ManagedCombatBridge
             {
                 runtime.ApplyPlayerDeckTeamA(gameData, data.Stage?.PlayerDeck, dynamicGame.StageID, dynamicGame.DungeonID);
             }
+            runtime.ApplyEnemyDeckTeamB(gameData, runtimeData, data.Stage?.EnemyDeck);
             runtime.RefreshTutorialTeamADeck(gameData, dynamicGame.StageID, dynamicGame.DungeonID);
             runtime.ApplyPlayerIdentityTeamA(gameData, data.Stage?.PlayerDeck);
             runtime.ApplyGameType(gameData, dynamicGame);
@@ -1076,6 +1077,11 @@ internal static class ManagedCombatBridge
             // same gameData that NKCGameServerLocal just mutated so runtime
             // gameUnitUIDs resolve to the same unit/team on both sides.
             gameLoadAck = runtime.BuildGameLoadAck(gameData);
+            if (data.Stage?.EnemyDeck != null)
+            {
+                dynamicGame.LocalPvpGameType = Convert.ToInt32(runtime.GetField(gameData, "m_NKM_GAME_TYPE"), CultureInfo.InvariantCulture);
+                dynamicGame.LocalPvpStartPayloadBase64 = runtime.BuildLocalPvpStartAck(gameData, runtimeData).PayloadBase64;
+            }
             var setupPackets = runtime.DrainClientPackets($"managed-setup-{dynamicGame.GameUID}");
 
             var sessionId = dynamicGame.GameUID.ToString(CultureInfo.InvariantCulture);
@@ -1148,6 +1154,7 @@ internal static class ManagedCombatBridge
             {
                 packets.Add(session.BuildLoadCompleteAck());
                 session.Start();
+                session.PatchPlayerShipInitialHp(dynamicGame);
                 packets.AddRange(session.DrainQueuedPackets("managed-game-start"));
                 packets.AddRange(session.DrainSetupPackets());
                 
@@ -1476,6 +1483,7 @@ internal static class ManagedCombatBridge
         private readonly MethodInfo syncDataPackFlush;
         private bool finishStateFlushedWithGameEnd;
         private float initialRemainGameTime = -1f;
+        private bool playerShipHpInitialized;
         private float playStartClientGameTime = -1f;
         private DynamicGameState? latestDynamicGame;
         private BattleState? latestBattleState;
@@ -2410,6 +2418,17 @@ internal static class ManagedCombatBridge
         {
             RememberDynamicGame(dynamicGame);
             if (dynamicGame == null || battleState == null) return;
+            if (Started && (dynamicGame.GameType == 5 || dynamicGame.GameType == 15 || dynamicGame.GameType == 29))
+            {
+                PatchPlayerShipInitialHp(dynamicGame);
+                var playerShip = ReadTeamBossSnapshot(teamA: true, battleState);
+                if (playerShip.MaxHp > 0)
+                {
+                    battleState.DiveShipCurHp = playerShip.CurHp;
+                    battleState.DiveShipMaxHp = playerShip.MaxHp;
+                    battleState.ShipHpDamagePercent = Math.Clamp((1.0 - playerShip.CurHp / playerShip.MaxHp) * 100.0, 0.0, 100.0);
+                }
+            }
             var tracksBoss = dynamicGame.RaidUID > 0 || IsFierceGame(dynamicGame);
             if (!tracksBoss) return;
             var snapshot = ReadTeamBossSnapshot(teamA: false, battleState);
@@ -2432,6 +2451,19 @@ internal static class ManagedCombatBridge
             battleState.BossHpPercent = Math.Clamp(currentHp / initHp * 100.0, 0.0, 100.0);
             battleState.BossDamageRatio = Math.Clamp(damage / initHp, 0.0, 1.0);
             battleState.BossKilled = currentHp <= 0;
+        }
+
+        public void PatchPlayerShipInitialHp(DynamicGameState? dynamicGame)
+        {
+            if (playerShipHpInitialized || dynamicGame?.ShipInitHp is not double fraction) return;
+            var unit = FindTeamBossUnit(teamA: true, includePool: true);
+            if (unit == null) return;
+            var maxHp = ReadFloat(runtime.Invoke(unit, "GetMaxHP"), 0f);
+            if (maxHp > 0)
+            {
+                runtime.Invoke(unit, "SetHP", (float)(maxHp * Math.Clamp(fraction, 0.0, 1.0)));
+                playerShipHpInitialized = true;
+            }
         }
 
         public void SetInitialRaidBossHP(double curHp, double maxHp)
@@ -2493,7 +2525,8 @@ internal static class ManagedCombatBridge
                 var unit = FindTeamBossUnit(teamA, includePool: true);
                 if (unit == null)
                 {
-                    var fallbackMax = (float)Math.Max(0, battleState.RaidBossMaxHp > 0 ? battleState.RaidBossMaxHp : battleState.RaidBossInitHp);
+                    var fallbackMax = teamA ? (float)battleState.DiveShipMaxHp
+                        : (float)Math.Max(0, battleState.RaidBossMaxHp > 0 ? battleState.RaidBossMaxHp : battleState.RaidBossInitHp);
                     return fallbackMax > 0 ? (0f, fallbackMax) : (0f, 0f);
                 }
 
@@ -3937,6 +3970,16 @@ internal static class ManagedCombatBridge
             // Captured 804 starts as a tutorial payload. Pin the type each time
             // NKCGameServerLocal mutates gameData so normal and special PvE
             // stages do not inherit stale tutorial result flow.
+            if (dynamicGame.MiscMode == "local-pvp")
+            {
+                SetField(gameData, "m_NKM_GAME_TYPE", Enum.Parse(GetType("NKM.NKM_GAME_TYPE"), "NGT_PVP_STRATEGY"));
+                SetField(gameData, "m_NKMGameStatRateID", "PVP_STAT_DEFAULT");
+                SetField(gameData, "m_DungeonID", 0);
+                SetField(gameData, "m_RaidUID", 0L);
+                SetField(gameData, "m_WarfareID", 0);
+                SetField(gameData, "m_bBossDungeon", false);
+                return;
+            }
             var gameTypeName = ResolveGameTypeName(dynamicGame);
             SetField(gameData, "m_NKM_GAME_TYPE", Enum.Parse(GetType("NKM.NKM_GAME_TYPE"), gameTypeName));
         }
@@ -3958,6 +4001,7 @@ internal static class ManagedCombatBridge
             if (IsTutorialDungeon(dynamicGame.DungeonID)) return "NGT_TUTORIAL";
             return dynamicGame.GameType switch
             {
+                5 => "NGT_DIVE",
                 8 => "NGT_RAID",
                 9 => "NGT_CUTSCENE",
                 12 => "NGT_RAID_SOLO",
@@ -3965,6 +4009,7 @@ internal static class ManagedCombatBridge
                 14 => "NGT_FIERCE",
                 15 => "NGT_PHASE",
                 23 => "NGT_TRIM",
+                25 => "NGT_GUILD_DUNGEON_BOSS_PRACTICE",
                 26 => "NGT_PVE_DEFENCE",
                 29 => "NGT_EXPLORE",
                 _ => "NGT_DUNGEON"
@@ -4027,11 +4072,29 @@ internal static class ManagedCombatBridge
             if (playerDeck == null || playerDeck.Units.Count == 0) return;
             if (IsTutorialDungeon(dungeonId) || stageId is 11211 or 11212 or 11213 or 11214) return;
 
-            var teamA = GetField(gameData, "m_NKMGameTeamDataA");
+            ApplyPlayerDeckTeam(gameData, playerDeck, "m_NKMGameTeamDataA", "NTT_A1");
+        }
+
+        public void ApplyEnemyDeckTeamB(object gameData, object? runtimeData, PlayerDeckData? enemyDeck)
+        {
+            if (enemyDeck == null || enemyDeck.Units.Count == 0) return;
+            ApplyPlayerDeckTeam(gameData, enemyDeck, "m_NKMGameTeamDataB", "NTT_B1");
+            var runtimeTeam = runtimeData == null ? null : GetField(runtimeData, "m_NKMGameRuntimeTeamDataB");
+            if (runtimeTeam == null) return;
+            SetField(runtimeTeam, "m_UserUID", ParseLong(enemyDeck.UserUid));
+            SetField(runtimeTeam, "m_bAutoRespawn", true);
+            SetField(runtimeTeam, "m_bAIDisable", false);
+            SetField(runtimeTeam, "m_NKM_GAME_AUTO_SKILL_TYPE", 1);
+            SetField(runtimeTeam, "m_fRespawnCost", 10f);
+        }
+
+        private void ApplyPlayerDeckTeam(object gameData, PlayerDeckData playerDeck, string teamField, string teamType)
+        {
+            var teamA = GetField(gameData, teamField);
             if (teamA == null) return;
 
             var userUid = ParseLong(playerDeck.UserUid);
-            SetField(teamA, "m_eNKM_TEAM_TYPE", Enum.Parse(GetType("NKM.NKM_TEAM_TYPE"), "NTT_A1"));
+            SetField(teamA, "m_eNKM_TEAM_TYPE", Enum.Parse(GetType("NKM.NKM_TEAM_TYPE"), teamType));
             SetField(teamA, "m_user_uid", userUid);
             SetField(teamA, "m_UserLevel", Math.Max(1, playerDeck.UserLevel));
             SetField(teamA, "m_UserNickname", playerDeck.Nickname ?? "");
@@ -4046,15 +4109,22 @@ internal static class ManagedCombatBridge
                     Math.Max(1, playerDeck.ShipLevel),
                     playerDeck.ShipSkinId,
                     0,
-                    0,
+                    playerDeck.ShipLimitBreakLevel,
                     userUid,
-                    null,
+                    playerDeck.ShipSkillLevels,
                     null));
             }
+
+            var ship = GetField(teamA, "m_MainShip");
+            if (ship != null) ApplyShipCommandModules(ship, playerDeck.ShipCommandModules);
+            SetField(teamA, "m_Operator", CreateDeckOperator(playerDeck));
+            SetField(teamA, "m_FriendCode", userUid);
+            SetField(teamA, "m_Score", 1000);
 
             ClearCollectionField(teamA, "m_listUnitData");
             ClearCollectionField(teamA, "m_listAssistUnitData");
             ClearCollectionField(teamA, "m_listEvevtUnitData");
+            ClearCollectionField(teamA, "m_listEnvUnitData");
             ClearCollectionField(teamA, "m_listOperatorUnitData");
             ClearCollectionField(teamA, "m_listDynamicRespawnUnitData");
             ClearCollectionField(teamA, "m_ItemEquipData");
@@ -4077,6 +4147,13 @@ internal static class ManagedCombatBridge
                     userUid,
                     unitData.SkillLevels,
                     GetValidUnitEquipItemUids(unitData, validEquipItemUids));
+                SetField(unit, "reactorLevel", Math.Max(0, unitData.ReactorLevel));
+                if (unitData.StatExp.Count > 0)
+                {
+                    ClearCollectionField(unit, "m_listStatEXP");
+                    var stats = GetField(unit, "m_listStatEXP");
+                    foreach (var value in unitData.StatExp.Take(6)) AddCollectionItem(stats, value);
+                }
                 AddCollectionItem(unitList, unit);
                 if (firstUnitUid <= 0) firstUnitUid = unitUid;
             }
@@ -4086,6 +4163,68 @@ internal static class ManagedCombatBridge
             if (leaderUid > 0) SetField(teamA, "m_LeaderUnitUID", leaderUid);
 
             RefreshTeamDeck(gameData, teamA, resetDeck: true);
+        }
+
+        private object? CreateDeckOperator(PlayerDeckData deck)
+        {
+            if (deck.OperatorId <= 0) return null;
+            var data = deck.OperatorData;
+            var result = Create("NKM.NKMOperator");
+            SetField(result, "uid", ParseLong(deck.OperatorUid));
+            SetField(result, "id", deck.OperatorId);
+            SetField(result, "level", Math.Max(1, deck.OperatorLevel));
+            SetField(result, "exp", data?.Exp ?? 0);
+            SetField(result, "bLock", data?.Locked ?? false);
+            SetField(result, "fromContract", data?.FromContract ?? true);
+            foreach (var name in new[] { "mainSkill", "subSkill" })
+            {
+                var source = name == "mainSkill" ? data?.MainSkill : data?.SubSkill;
+                var skill = Create("NKM.NKMOperatorSkill");
+                SetField(skill, "id", source?.Id ?? 0);
+                SetField(skill, "level", source?.Level ?? 1);
+                SetField(skill, "exp", source?.Exp ?? 0);
+                SetField(result, name, skill);
+            }
+            return result;
+        }
+
+        private void ApplyShipCommandModules(object ship, JsonElement modules)
+        {
+            if (modules.ValueKind != JsonValueKind.Array) return;
+            ClearCollectionField(ship, "ShipCommandModule");
+            var collection = GetField(ship, "ShipCommandModule");
+            foreach (var item in modules.EnumerateArray())
+            {
+                if (!item.TryGetProperty("slots", out var slots) || slots.ValueKind != JsonValueKind.Array) continue;
+                var module = Create("NKM.NKMShipCmdModule");
+                var array = Array.CreateInstance(GetType("NKM.NKMShipCmdSlot"), slots.GetArrayLength());
+                var index = 0;
+                foreach (var source in slots.EnumerateArray())
+                {
+                    var slot = Create("NKM.NKMShipCmdSlot");
+                    foreach (var name in new[] { "targetStyleType", "targetRoleType" })
+                    {
+                        if (!source.TryGetProperty(name, out var values) || values.ValueKind != JsonValueKind.Array) continue;
+                        var field = FindField(slot.GetType(), name)!;
+                        var set = Activator.CreateInstance(field.FieldType)!;
+                        var valueType = field.FieldType.GetGenericArguments()[0];
+                        foreach (var value in values.EnumerateArray())
+                        {
+                            var enumValue = value.ValueKind == JsonValueKind.String
+                                ? Enum.Parse(valueType, value.GetString()!) : Enum.ToObject(valueType, value.GetInt32());
+                            AddCollectionItem(set, enumValue);
+                        }
+                        SetField(slot, name, set);
+                    }
+                    if (source.TryGetProperty("statType", out var statType))
+                        SetField(slot, "statType", statType.ValueKind == JsonValueKind.String ? statType.GetString() : statType.GetInt32());
+                    if (source.TryGetProperty("statValue", out var statValue)) SetField(slot, "statValue", statValue.GetSingle());
+                    if (source.TryGetProperty("isLock", out var isLock)) SetField(slot, "isLock", isLock.GetBoolean());
+                    array.SetValue(slot, index++);
+                }
+                SetField(module, "slots", array);
+                AddCollectionItem(collection, module);
+            }
         }
 
         public void ApplyPlayerDeckFreeSlotsTeamA(
@@ -5042,6 +5181,17 @@ internal static class ManagedCombatBridge
                 Label = label,
                 PayloadBase64 = base64
             };
+        }
+
+        public HostPacket BuildLocalPvpStartAck(object gameData, object? runtimeData)
+        {
+            var packet = Create("ClientPacket.Pvp.NKMPacket_ASYNC_PVP_START_GAME_ACK");
+            SetField(packet, "errorCode", 0);
+            SetField(packet, "gameData", gameData);
+            SetField(packet, "gameRuntimeData", runtimeData);
+            SetField(packet, "skip", false);
+            SetField(packet, "targetList", Activator.CreateInstance(FindField(packet.GetType(), "targetList")!.FieldType));
+            return SerializePacket(packet, 2618, "local-pvp-start");
         }
 
         public HostPacket BuildGameLoadAck(object gameData)

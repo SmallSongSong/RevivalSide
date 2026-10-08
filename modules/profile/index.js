@@ -20,6 +20,7 @@ const {
   toBigInt,
 } = require("../packet-codec");
 const { getMiscItem } = require("../inventory");
+const { buildGuildSimpleData: buildPersistedGuildSimpleData } = require("../guild");
 const { ensureArmy, ensureDeck } = require("../unit");
 const { getEquipItems } = require("../equipment");
 const { buildSupportUnitData: buildPersistedSupportUnitData, ensureSupportUnit } = require("../combat-roster");
@@ -215,7 +216,7 @@ function buildUserProfileData(user) {
     writeNullableObject(buildAsyncDeckData(user)),
     writeNullableObjectList((user.profileEmblems || []).map(buildEmblemData)),
     writeSignedVarInt(Number(user.selfiFrameId || user.frameId || 0) || 0),
-    writeNullableObject(buildGuildSimpleData()),
+    writeNullableObject(buildGuildSimpleData(user)),
     writeBool(Boolean(user.hasOffice || user.office)),
     writeSignedVarInt(0),
   ]);
@@ -318,8 +319,8 @@ function buildSupportUnitData(user) {
   ]);
 }
 
-function buildGuildSimpleData() {
-  return Buffer.concat([writeSignedVarLong(0n), writeString(""), writeSignedVarLong(0n)]);
+function buildGuildSimpleData(user) {
+  return buildPersistedGuildSimpleData(user);
 }
 
 function buildLeaderBoardAchieveData(user) {
@@ -330,7 +331,7 @@ function buildAchieveData(user) {
   return Buffer.concat([
     writeNullableObject(buildCommonProfileData(user)),
     writeSignedVarLong(getAchievePoint(user)),
-    writeNullableObject(buildGuildSimpleData()),
+    writeNullableObject(buildGuildSimpleData(user)),
   ]);
 }
 

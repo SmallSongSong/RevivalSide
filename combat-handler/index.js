@@ -406,7 +406,7 @@ function createCombatHandler(options = {}) {
 
   function startBattleLoop(socket, label, callbacks = {}) {
     const replay = socket.session && socket.session.gameReplay;
-    if (!replay || replay.dynamicBattleTimer || !config.DYNAMIC_BATTLE_MANAGER) return false;
+    if (!replay || replay.dynamicBattleTimer || replay.dynamicBattleResultSent || !config.DYNAMIC_BATTLE_MANAGER) return false;
     const syncInterval =
       replay.dynamicGame && replay.dynamicGame.managedCombat
         ? Number(config.MANAGED_HOST_TICK_INTERVAL_MS || 33)
@@ -418,11 +418,12 @@ function createCombatHandler(options = {}) {
     let firstPump = true;
 
     function sendPumpedPackets(packets, pumpOptions = {}) {
-      const endIndex = packets.findIndex((packet) => packet && packet.packetId === constants.GAME_END_NOT);
+      const isEndPacket = (packet) => packet && (packet.packetId === constants.GAME_END_NOT || packet.packetId === 3906);
+      const endIndex = packets.findIndex(isEndPacket);
       const outboundPackets = (endIndex >= 0 ? packets.slice(0, endIndex + 1) : packets).filter(
         (packet) => packet && packet.packetId && packet.payload
       );
-      const outboundEndIndex = outboundPackets.findIndex((packet) => packet && packet.packetId === constants.GAME_END_NOT);
+      const outboundEndIndex = outboundPackets.findIndex(isEndPacket);
       const quietManagedBurst =
         managedCombat && pumpOptions.dropQuietManagedSync && isQuietManagedSyncBurst(outboundPackets, constants);
       if (quietManagedBurst) {
@@ -704,7 +705,9 @@ function createCombatHandler(options = {}) {
   function applyHostState(replay, response) {
     if (!replay || !response) return;
     if (response.dynamicGame) {
-      if (replay.dynamicGame) replaceMutable(replay.dynamicGame, response.dynamicGame);
+      // Host responses only contain C# combat fields; retain listener-owned
+      // deck, dive identity, and phase-chain metadata across deploy/skill calls.
+      if (replay.dynamicGame) Object.assign(replay.dynamicGame, response.dynamicGame);
       else replay.dynamicGame = response.dynamicGame;
     }
     if (response.battleState) {

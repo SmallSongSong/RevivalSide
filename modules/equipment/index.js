@@ -1,6 +1,7 @@
 const { dateTimeBinaryNow, statTypeName, toBigInt } = require("../packet-codec");
 const {
   getEquipTemplet,
+  isUsableEquipTemplet,
   getAllEquipIds,
   getEquipEnchantFeedExp,
   getEquipEnchantMaterials,
@@ -94,8 +95,13 @@ function ensureEquipInventory(user) {
 
   for (const [key, value] of Object.entries(inventory.equips)) {
     const equip = normalizeEquip(value);
-    if (!equip) {
+    if (!equip || !isUsableEquipTemplet(getEquipTemplet(equip.itemEquipId))) {
+      // Preserve unsupported entries for recovery while omitting them from client inventory.
+      inventory.quarantinedEquips = inventory.quarantinedEquips && typeof inventory.quarantinedEquips === "object"
+        ? inventory.quarantinedEquips : {};
+      inventory.quarantinedEquips[key] = { item: value, reason: "unsupported-equipment", quarantinedAt: String(dateTimeBinaryNow()) };
       delete inventory.equips[key];
+      markInventoryTouched(inventory);
       continue;
     }
     if (String(key) !== String(equip.equipUid)) delete inventory.equips[key];
@@ -318,7 +324,7 @@ function grantEquipItem(user, equipId, options = {}) {
     user.localEquipGrantCursor = Number(user.localEquipGrantCursor || 0) + 1;
   }
   const templet = getEquipTemplet(numericEquipId);
-  if (!templet) return null;
+  if (!isUsableEquipTemplet(templet)) return null;
 
   const inventory = ensureEquipInventory(user);
   const equipUid = allocateEquipUid(user);

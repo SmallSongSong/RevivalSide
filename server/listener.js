@@ -97,6 +97,11 @@ const {
   buildCraftSlotData: buildSerializedCraftSlotData,
 } = require("../modules/packet-codec");
 const { getEquipItems, getMoldItems, getCraftSlots } = require("../modules/equipment");
+const localPvp = require("../modules/local-pvp");
+const {
+  buildPrivateGuildData: buildPersistedPrivateGuildData,
+  buildGuildSimpleData: buildPersistedGuildSimpleData,
+} = require("../modules/guild");
 const {
   ensureAccountProgress,
   grantStageClearExp,
@@ -150,6 +155,7 @@ const simulation = require("../modules/simulation");
 const stamina = require("../modules/stamina");
 const collection = require("../modules/collection");
 const worldMap = require("../modules/world-map");
+const explore = require("../modules/explore");
 const { ensureLoginRewardPosts } = require("../modules/admin");
 const {
   ensureStageFavorites,
@@ -1543,6 +1549,7 @@ function createPacketContext() {
     maybeSendTutorialCutsceneClear,
     logGameLoadReq,
     decodeGameLoadReq,
+    readNkmEventDeckData,
     decodeGameRespawnReq,
     decodeGameUnitSkillReq,
     decodeGameShipSkillReq,
@@ -1558,6 +1565,7 @@ function createPacketContext() {
     buildGameRespawnAckPayload,
     buildGamePauseAckPayload,
     buildDynamicGameEndNotPayload,
+    sendLocalPvpGameEnd,
     sendRaidStateDataForSocket,
     stopGameSyncTimers,
     abandonDynamicBattle,
@@ -1609,6 +1617,7 @@ function createPacketContext() {
     buildFierceSeasonNotPayload,
     getCurrentFierceSeasonId,
     buildDefenceGameStartAckPayload,
+    sendDefenceGameEnd,
     buildExploreInfoAckPayload,
     buildExploreEnterAckPayload,
     extractNullableGameDataFromGameLoadAckPayload,
@@ -2759,7 +2768,7 @@ function sendStaminaChargeNotifications(socket, label = "stamina-charge", option
 }
 
 function sendManagedOrImmediatePackets(socket, packets) {
-  const endIndex = (packets || []).findIndex((item) => item && item.packetId === GAME_END_NOT);
+  const endIndex = (packets || []).findIndex((item) => item && (item.packetId === GAME_END_NOT || item.packetId === 3906));
   const outbound = endIndex >= 0 ? packets.slice(0, endIndex + 1) : packets;
   withSocketPacketBurst(socket, () => {
     for (const item of outbound || []) {
@@ -2777,7 +2786,51 @@ function sendManagedOrImmediatePackets(socket, packets) {
 }
 
 function sendManagedOrImmediatePacket(socket, packetId, payload, label, meta = {}) {
+  const replay = socket && socket.session && socket.session.gameReplay;
+  if ((packetId === GAME_END_NOT || packetId === 3906) && replay && replay.dynamicGame && replay.dynamicGame.miscMode === "defence") {
+    return sendDefenceGameEnd(socket, { meta });
+  }
+  if (packetId === GAME_END_NOT && localPvp.isLocalPvpReplay(socket.session && socket.session.gameReplay)) {
+    return sendLocalPvpGameEnd(socket, { meta });
+  }
   sendServerGamePacket(socket, packetId, normalizeManagedCombatPayload(socket, packetId, payload, label, meta), label);
+}
+
+function sendLocalPvpGameEnd(socket, options = {}) {
+  const replay = socket && socket.session && socket.session.gameReplay;
+  if (!localPvp.isLocalPvpReplay(replay)) return false;
+  const match = replay.localPvpMatch;
+  if (match.resultSent) return true;
+  const battleState = options.battleState || replay.battleState || {};
+  const meta = options.meta || {};
+  const managedWin = extractManagedBattleWin(meta);
+  const override = {
+    ...(extractManagedBattleRecords(meta).length ? { managedBattleRecords: extractManagedBattleRecords(meta) } : {}),
+    ...(extractManagedBattlePlayTime(meta) > 0 ? { managedBattlePlayTime: extractManagedBattlePlayTime(meta) } : {}),
+  };
+  const playTime = getBattleEndPlayTime(battleState, override);
+  const payload = localPvp.buildGameEndPayload(socket, {
+    win: options.giveup === true ? false : (typeof managedWin === "boolean" ? managedWin : isBattleWin(battleState)),
+    gameEndTime: playTime,
+    gameRecordPayload: buildBattleGameRecordData(replay, buildBattleGameRecordState(battleState, override), { playTime }),
+    now: getServerNowDate(),
+  });
+  if (!payload) return false;
+  const user = socket.session.user;
+  const now = getServerNowDate();
+  let missionsChanged = false;
+  if (!match.simulationGame && !match.missionTracked) {
+    missionsChanged = trackMissionEvent(user, "PVP_PLAY_ASYNC", 1, { now });
+    match.missionTracked = true;
+    if (missionsChanged) refreshMissionProgress(user, { now, eventDateKey: getServerEventDateKey(), conditions: ["PVP_PLAY_ASYNC"] });
+  }
+  if (USE_LOCAL_USER_DB) saveUserDb();
+  sendServerGamePacket(socket, 2623, payload, "local-pvp-game-end");
+  match.resultSent = true;
+  replay.dynamicBattleResultSent = true;
+  stopGameSyncTimers(socket);
+  if (missionsChanged) sendTrackedMissionUpdate(socket, user, { now, eventDateKey: getServerEventDateKey(), conditions: ["PVP_PLAY_ASYNC"], label: "local-pvp-mission-update" });
+  return true;
 }
 
 function sendPendingGameStartSync(socket, label) {
@@ -2966,7 +3019,7 @@ function startDynamicBattleManager(socket, label) {
   // callbacks keep socket writes and captured packet advancement in this file.
   return combatHandler.startBattleLoop(socket, label, {
     sendGamePacket(socket, packetId, payload, label, meta = {}) {
-      if (packetId === GAME_END_NOT) {
+      if (packetId === GAME_END_NOT || packetId === 3906) {
         const managedBattleWin = extractManagedBattleWin(meta);
         const replay = socket && socket.session && socket.session.gameReplay;
         const finishState =
@@ -2983,6 +3036,14 @@ function startDynamicBattleManager(socket, label) {
     },
     sendBattleResult(socket, finishedState) {
       const replay = socket && socket.session && socket.session.gameReplay;
+      if (localPvp.isLocalPvpReplay(replay)) {
+        sendDynamicFinishStateSync(socket, finishedState, "local-pvp-finish-state");
+        return sendLocalPvpGameEnd(socket, { battleState: finishedState });
+      }
+      if (replay && replay.dynamicGame && replay.dynamicGame.miscMode === "defence") {
+        sendDynamicFinishStateSync(socket, finishedState, "defence-finish-state");
+        return sendDefenceGameEnd(socket, { battleState: finishedState });
+      }
       const payload = buildDynamicGameEndNotPayload(replay, {
         battleState: finishedState,
         fallbackWin: false,
@@ -3165,8 +3226,21 @@ function buildDynamicGameLoadPayload(socket, req, stage) {
   // start managed 822 sync before GAME_LOAD_COMPLETE_REQ (807) arrives.
   stopGameSyncTimers(socket);
   replay.loadCompleteReceived = false;
+  replay.pendingGameStartBootstrap = false;
+  replay.pendingGameStartPackets = [];
   replay.dynamicBattlePaused = false;
   replay.dynamicBattleResultSent = false;
+  replay.dynamicBattleClearRecorded = false;
+  replay.dynamicGameEndPayload = null;
+  replay.defenceGameEndPayload = null;
+  replay.defenceGameStartAckPayload = null;
+  replay.defenceGameStartKey = null;
+  replay.gameLoadAckPayload = null;
+  replay.gameLoadRequestKey = null;
+  replay.phaseBattleResult = null;
+  replay.trimBattleResult = null;
+  replay.heartbeatCount = 0;
+  replay.battleSim = null;
   replay.tutorialClearRecorded = false;
   replay.stageClearLoot = null;
   replay.lastDynamicGameEndResult = null;
@@ -3179,7 +3253,7 @@ function buildDynamicGameLoadPayload(socket, req, stage) {
     String(activeStage.miscMode || "").toLowerCase() === "fierce" ||
     Number(activeStage.gameType || 0) === NGT_FIERCE ||
     positiveInt(req.fierceBossId || req.fierceBossID || req.bossId) > 0;
-  const seedGameLoadTemplate = !nativeTutorialLoad && (!usesEventDeck || fierceLoad);
+  const seedGameLoadTemplate = !nativeTutorialLoad && (!usesEventDeck || fierceLoad) && activeStage.miscMode !== "local-pvp";
   const battleConditionIds = resolveGameLoadBattleConditionIds(activeStage, req, user);
   const fierceScorePlan = buildFierceScorePlanForStage(activeStage, req, user);
   const stageForBattle = {
@@ -3210,6 +3284,10 @@ function buildDynamicGameLoadPayload(socket, req, stage) {
     const gameType = Number(activeStage.gameType || (req && req.gameType) || replay.dynamicGame.gameType || 0);
     if (gameType) replay.dynamicGame.gameType = gameType;
     if (activeStage.playerDeck) replay.dynamicGame.playerDeck = activeStage.playerDeck;
+    if (activeStage.enemyDeck) replay.dynamicGame.enemyDeck = activeStage.enemyDeck;
+    for (const key of ["diveUid", "diveSlotSetIndex", "diveSlotIndex", "diveDeckIndex", "shipInitHp", "phaseIndex", "phaseDungeonIds", "trimStageList", "shadowBattleOrder", "palaceID", "exploreRunId", "exploreBattleToken", "exploreStageId", "exploreZoneId", "exploreStep", "exploreSlotIndex", "exploreID"]) {
+      if (activeStage[key] != null) replay.dynamicGame[key] = activeStage[key];
+    }
     if (activeStage.worldmapEventID) replay.dynamicGame.worldmapEventID = Number(activeStage.worldmapEventID || 0);
     if (activeStage.diveStageID || (req && req.diveStageID)) replay.dynamicGame.diveStageID = Number(activeStage.diveStageID || req.diveStageID || 0);
     if (activeStage.miscMode) replay.dynamicGame.miscMode = String(activeStage.miscMode || "");
@@ -3252,6 +3330,7 @@ function sendDynamicGameLoadAck(socket, req, stage) {
   if (!result) return false;
   const replay = result.replay;
   const payload = result.payload;
+  replay.gameLoadAckPayload = payload;
   const raidHpChanged = syncRaidCombatHpForReplay(socket, replay, "raid-game-load");
   const label = result.capturedTutorialBootstrap
     ? "captured-tutorial-game-load"
@@ -3713,6 +3792,9 @@ function sendRaidStateDataForSocket(socket, label = "raid-state") {
 function maybeRecordDynamicBattleClear(socket, overrideState = null) {
   const replay = socket && socket.session && socket.session.gameReplay;
   if (!replay || !replay.dynamicGame || replay.dynamicGame.tutorial) return false;
+  if (replay.dynamicBattleClearRecorded || ["local-pvp", "guild-practice", "defence", "explore"].includes(replay.dynamicGame.miscMode)) return false;
+  if (replay.phaseBattleResult && !replay.phaseBattleResult.completed) return false;
+  if (replay.trimBattleResult && !replay.trimBattleResult.completed) return false;
   if (Number(replay.dynamicGame.diveStageID || 0) > 0 || Number(replay.dynamicGame.gameType || 0) === NGT_DIVE) return false;
   if (isRaidDynamicGame(replay.dynamicGame)) {
     const lastEnd = replay.lastDynamicGameEndResult || null;
@@ -3731,13 +3813,18 @@ function maybeRecordDynamicBattleClear(socket, overrideState = null) {
     lastEnd &&
     Number(lastEnd.dungeonId || 0) === dynamicDungeonId &&
     Number(lastEnd.stageId || 0) === dynamicStageId;
-  const battleState = (lastEndMatches && lastEnd.battleState) || overrideState || replay.battleState || {};
+  let battleState = (lastEndMatches && lastEnd.battleState) || overrideState || replay.battleState || {};
+  if (replay.phaseBattleResult && replay.phaseBattleResult.completed) {
+    battleState = { ...battleState, gameTime: replay.phaseBattleResult.totalPlayTime, GameTime: replay.phaseBattleResult.totalPlayTime };
+  }
   const authoritativeWin = Boolean(lastEndMatches && lastEnd.win === true && !lastEnd.giveup);
   if (!authoritativeWin && !isBattleWin(battleState)) return false;
-  return (
+  const recorded = (
     recordMainStoryDungeonClear(socket, lastEndMatches ? lastEnd.dungeonId : undefined, battleState) ||
     recordGenericDungeonClear(socket, lastEndMatches ? lastEnd.dungeonId : undefined, battleState)
   );
+  if (recorded) replay.dynamicBattleClearRecorded = true;
+  return recorded;
 }
 
 function recordMainStoryDungeonClear(socket, dungeonId, battleState = null) {
@@ -3764,7 +3851,7 @@ function recordMainStoryDungeonClear(socket, dungeonId, battleState = null) {
     forceMissionSuccess: false,
   });
   if (saved) {
-    const userExp = getDungeonUserExpReward(resolvedDungeonId);
+    const userExp = getDungeonUserExpReward(resolvedDungeonId, resolvedStageId);
     maybeGrantBattleStageClearLoot(replay, user, resolvedDungeonId, resolvedStageId, state);
     grantStageClearExp(user, resolvedStageId, resolvedDungeonId, userExp > 0 ? { exp: userExp } : undefined);
     recordGameplayUnlockClearForUser(user, resolvedDungeonId, resolvedStageId, { save: false });
@@ -3798,7 +3885,7 @@ function recordGenericDungeonClear(socket, dungeonId, battleState = null) {
     state.missionResult2 = missionResults.missionResult2;
     state.missionResults = { ...missionResults };
   }
-  const userExp = getDungeonUserExpReward(resolvedDungeonId);
+  const userExp = getDungeonUserExpReward(resolvedDungeonId, resolvedStageId);
   maybeGrantBattleStageClearLoot(replay, user, resolvedDungeonId, resolvedStageId, state);
   grantStageClearExp(user, resolvedStageId, resolvedDungeonId, userExp > 0 ? { exp: userExp } : undefined);
   const saved = recordGenericDungeonClearForUser(user, resolvedDungeonId, resolvedStageId, state, {
@@ -3948,7 +4035,9 @@ function recordMiscStageClearForUser(user, dungeonId, stageId, battleState = {})
     state.trim = state.trim && typeof state.trim === "object" ? state.trim : {};
     state.trim.lastClear = {
       trimId: positiveInt(miscStage.trimId),
-      trimLevel: Math.max(1, positiveInt(miscStage.trimLevel) || 1),
+      trimLevel: state.trim.lastClear && positiveInt(state.trim.lastClear.dungeonId) === positiveInt(dungeonId)
+        ? Math.max(1, positiveInt(state.trim.lastClear.trimLevel) || 1)
+        : Math.max(1, positiveInt(miscStage.trimLevel) || 1),
       dungeonId: positiveInt(dungeonId),
       stageId: positiveInt(stageId),
       score: Math.max(1, 100000 - playTime),
@@ -4093,6 +4182,9 @@ function buildTutorialGameEndNotPayload(replay, override = {}) {
 function buildDynamicGameEndNotPayload(replay, override = {}) {
   const dynamicGame = replay && replay.dynamicGame;
   if (!dynamicGame) return null;
+  if (replay.dynamicGameEndPayload) return replay.dynamicGameEndPayload;
+  const isPracticeGame = dynamicGame.miscMode === "guild-practice";
+  const isExploreGame = dynamicGame.miscMode === "explore" || Number(dynamicGame.gameType) === NGT_EXPLORE;
   const battleState = override.battleState || replay.battleState || {};
   const requestedDungeonId = Number(override.dungeonID || dynamicGame.dungeonID || 0);
   const requestedStageId = Number(override.stageID || dynamicGame.stageID || 0);
@@ -4113,6 +4205,12 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
         }
       : override
   );
+  const isPhaseGame = Number(dynamicGame.gameType || 0) === NGT_PHASE || String(dynamicGame.miscMode || "") === "phase";
+  const phaseResult = isPhaseGame ? resolvePhaseBattleResult(dynamicGame, override.user, win, playTime, battleState) : null;
+  replay.phaseBattleResult = phaseResult;
+  const trimResult = dynamicGame.miscMode === "trim" ? resolveTrimBattleResult(dynamicGame, override.user, win, playTime) : null;
+  replay.trimBattleResult = trimResult;
+  const stageCompleted = (!isPhaseGame || Boolean(phaseResult && phaseResult.completed)) && (!trimResult || trimResult.completed);
   const missionResults = resolveDungeonMissionResults(dungeonId, {
     stageId,
     win,
@@ -4150,14 +4248,25 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
   const raidBattleResult = isRaidGame ? maybeRecordRaidBattleResultForReplay(replay, { ...override, battleState }, win) : null;
   const isDiveGame = !isRaidGame && (Number(dynamicGame.diveStageID || 0) > 0 || Number(dynamicGame.gameType || 0) === NGT_DIVE);
   const diveBattleResult = isDiveGame ? worldMap.completeDiveBattle(override.user, dynamicGame, battleState, { win, now: dateTimeBinaryNow() }) : null;
-  const stageLoot = !isRaidGame && !isDiveGame && win ? getOrGrantStageClearLoot(replay, override.user, dungeonId, stageId, { save: false }) : null;
+  if (isExploreGame && !explore.completeBattle(override.user, dynamicGame, battleState, { win })) return null;
+  const exploreParts = isExploreGame ? explore.serializeGameEndParts(override.user) : null;
+  const stageLoot = !isRaidGame && !isDiveGame && !isPracticeGame && !isExploreGame && win && stageCompleted ? getOrGrantStageClearLoot(replay, override.user, dungeonId, stageId, { save: false }) : null;
   const costItems = isRaidGame
     ? (raidBattleResult && raidBattleResult.costItems) || []
     : isDiveGame
       ? []
+      : isPracticeGame
+        ? []
+      : isExploreGame
+        ? []
+      : isPhaseGame && Number(dynamicGame.phaseIndex || 0) > 0
+        ? []
+      : trimResult && trimResult.index > 0
+        ? []
+      : dynamicGame.miscMode === "shadow" && Number(dynamicGame.shadowBattleOrder || 1) > 1
+        ? []
       : spendStageReqItemCostForReplay(replay, override.user, stageId);
-  const episodeCompleteData = !isRaidGame && !isDiveGame && win ? buildMainStoryEpisodeCompleteDataForStage(override.user, stageId) : null;
-  const isPhaseGame = Number(dynamicGame.gameType || 0) === NGT_PHASE || String(dynamicGame.miscMode || "") === "phase";
+  const episodeCompleteData = !isRaidGame && !isDiveGame && !isPracticeGame && !isExploreGame && win && stageCompleted ? buildMainStoryEpisodeCompleteDataForStage(override.user, stageId) : null;
   const fierceResult = buildFierceResultState({
     dynamicGame,
     battleState: missionBattleState,
@@ -4166,11 +4275,11 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
     fiercePoint: override.fiercePoint ?? override.managedFiercePoint,
     fiercePenaltyPoint: override.fiercePenaltyPoint ?? override.managedFiercePenaltyPoint,
   });
-  return Buffer.concat([
+  const payload = Buffer.concat([
     writeBool(win), // win
     writeBool(Boolean(override.giveup || false)), // giveup
     writeBool(Boolean(override.restart || false)), // restart
-    !isRaidGame && !isDiveGame && dungeonId
+    !isRaidGame && !isDiveGame && !isPracticeGame && !isExploreGame && dungeonId
       ? writeNullableObject(
           buildDungeonClearData(dungeonId, {
             stageId,
@@ -4182,7 +4291,7 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
           })
         )
       : writeNullObject(),
-    !isRaidGame && isPhaseGame
+    !isRaidGame && isPhaseGame && stageCompleted
       ? writeNullableObject(
           buildPhaseClearData(stageId, {
             win,
@@ -4199,28 +4308,75 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
     writeNullableObject(buildBattleGameRecordData(replay, gameRecordState, { playTime, fiercePoint: fierceResult.accquirePoint })), // gameRecord
     writeObjectList([]), // updatedUnits
     writeObjectList(costItems.map((item) => writeNullableObject(buildItemMiscData(item)))), // costItemDataList
-    stageId ? writeNullableObject(buildStagePlayData(stageId, { ...missionBattleState, gameTime: playTime })) : writeNullObject(),
-    writeNullableObject(buildShadowGameResultData(dynamicGame, missionBattleState)), // shadowGameResult
+    stageId && !isPracticeGame && !isExploreGame ? writeNullableObject(buildStagePlayData(stageId, { ...missionBattleState, gameTime: phaseResult ? phaseResult.totalPlayTime : playTime })) : writeNullObject(),
+    writeNullableObject(buildShadowGameResultData(dynamicGame, missionBattleState, { user: override.user })), // shadowGameResult
     writeNullableObject(buildFierceResultData(fierceResult)), // fierceResultData
-    isPhaseGame
+    phaseResult && phaseResult.next
       ? writeNullableObject(
           buildPhaseModeState(
             stageId,
-            Math.max(0, Number(dynamicGame.phaseIndex || 0) || 0),
-            dungeonId,
-            playTime,
-            0n
+            phaseResult.next.phaseIndex,
+            phaseResult.next.dungeonId,
+            phaseResult.next.totalPlayTime,
+            phaseResult.next.supportingUserUid
           )
         )
       : writeNullObject(), // phaseModeState
     writeSignedVarLong(0n), // killCountDelta
     writeNullObject(), // killCountData
-    writeNullObject(), // trimModeState
-    writeFloatLE(playTime), // totalPlayTime
-    writeNullObject(), // explore
-    writeNullObject(), // exploreSquad
-    writeSignedVarInt(0), // exploreEnhancePoint
+    trimResult && trimResult.state ? writeNullableObject(buildTrimModeState(trimResult.state)) : writeNullObject(), // trimModeState
+    writeFloatLE(phaseResult ? phaseResult.totalPlayTime : playTime), // totalPlayTime
+    exploreParts ? exploreParts.explore : writeNullObject(), // explore
+    exploreParts ? exploreParts.squad : writeNullObject(), // exploreSquad
+    exploreParts ? exploreParts.enhancePoint : writeSignedVarInt(0), // exploreEnhancePoint
   ]);
+  replay.dynamicGameEndPayload = payload;
+  if (phaseResult && !phaseResult.completed && USE_LOCAL_USER_DB) saveUserDb();
+  if (trimResult && !trimResult.completed && USE_LOCAL_USER_DB) saveUserDb();
+  if (dynamicGame.miscMode === "shadow" && !win && USE_LOCAL_USER_DB) saveUserDb();
+  if (isExploreGame && USE_LOCAL_USER_DB) saveUserDb();
+  return payload;
+}
+
+function resolvePhaseBattleResult(dynamicGame, user, win, playTime, battleState = {}) {
+  const dungeonIds = Array.isArray(dynamicGame.phaseDungeonIds) ? dynamicGame.phaseDungeonIds : [];
+  const phaseIndex = Math.max(0, Number(dynamicGame.phaseIndex || 0));
+  const phase = user && ensureMiscStageState(user).phase;
+  const previousTime = phase && Number(phase.stageId) === Number(dynamicGame.stageID) && Number(phase.phaseIndex) === phaseIndex
+    ? Math.max(0, Number(phase.totalPlayTime || 0)) : 0;
+  const totalPlayTime = previousTime + Math.max(0, Number(playTime || 0));
+  const nextDungeonId = win ? Number(dungeonIds[phaseIndex + 1] || 0) : 0;
+  const next = nextDungeonId ? {
+    stageId: Number(dynamicGame.stageID), phaseIndex: phaseIndex + 1, dungeonId: nextDungeonId,
+    totalPlayTime, supportingUserUid: phase && phase.supportingUserUid || "0",
+    eventDeckData: phase && phase.eventDeckData || null,
+    deckIndex: phase && phase.deckIndex || null,
+    ...(Number(battleState.diveShipMaxHp) > 0 ? { shipInitHp: Math.max(0, Math.min(1, Number(battleState.diveShipCurHp) / Number(battleState.diveShipMaxHp))) } : {}),
+  } : null;
+  if (user) ensureMiscStageState(user).phase = next;
+  return { completed: win && !next, next, totalPlayTime };
+}
+
+function resolveTrimBattleResult(dynamicGame, user, win, playTime) {
+  const rows = dynamicGame.trimStageList || getTrimStageRows(dynamicGame.trimId, dynamicGame.trimLevel);
+  const index = rows.findIndex((row) => positiveInt(row.DungeonID) === positiveInt(dynamicGame.dungeonID));
+  const trim = user && ensureMiscStageState(user).trim;
+  const previous = trim && trim.current || {};
+  const stageResults = Array.isArray(previous.trimStageResults) ? previous.trimStageResults.slice() : [];
+  const lastClearStage = { index: Math.max(0, index), dungeonId: positiveInt(dynamicGame.dungeonID), score: win ? Math.max(1, 100000 - Math.round(playTime)) : 0, isWin: win };
+  stageResults[Math.max(0, index)] = lastClearStage;
+  const nextDungeonId = win && index >= 0 ? positiveInt((rows[index + 1] || {}).DungeonID) : 0;
+  const state = {
+    trimId: dynamicGame.trimId, trimLevel: dynamicGame.trimLevel,
+    nextDungeonId, trimStageList: rows, trimStageResults: stageResults, lastClearStage,
+    eventDeckList: previous.eventDeckList || [],
+  };
+  if (user) {
+    const saved = ensureMiscStageState(user).trim ||= {};
+    saved.current = nextDungeonId ? state : null;
+    if (win) saved.lastClear = { trimId: dynamicGame.trimId, trimLevel: dynamicGame.trimLevel, dungeonId: dynamicGame.dungeonID, stageId: dynamicGame.stageID, score: lastClearStage.score };
+  }
+  return { completed: win && !nextDungeonId, index, state };
 }
 
 function buildBattleGameRecordState(battleState = {}, override = {}) {
@@ -4437,17 +4593,27 @@ function buildRaidBossResultData(result = {}) {
   ]);
 }
 
-function buildShadowGameResultData(dynamicGame = {}, battleState = {}) {
+function buildShadowGameResultData(dynamicGame = {}, battleState = {}, options = {}) {
   const palaceId = positiveInt(dynamicGame.palaceID || dynamicGame.palaceId);
   const dungeonId = palaceId ? positiveInt(dynamicGame.dungeonID) : 0;
   const recentTime = Math.max(0, Math.round(Number((battleState && (battleState.gameTime || battleState.GameTime)) || 0)));
+  const win = isBattleWin(battleState);
+  const shadow = palaceId && options.user ? (ensureMiscStageState(options.user).shadow ||= {}) : null;
+  const life = shadow ? Math.max(0, Number(shadow.life ?? 3) - (win ? 0 : 1)) : 3;
+  const currentDungeonId = win ? nextShadowDungeonId(palaceId, dungeonId) : dungeonId;
+  if (shadow) {
+    shadow.life = life;
+    shadow.palaces ||= {};
+    const palace = shadow.palaces[String(palaceId)] ||= { palaceId };
+    palace.currentDungeonId = currentDungeonId;
+  }
   return Buffer.concat([
     writeSignedVarInt(palaceId), // palaceId
     writeNullableObject(buildPalaceDungeonData(dungeonId, recentTime, recentTime)),
     writeNullObject(), // rewardData
     writeBool(false), // newRecord
-    writeSignedVarInt(nextShadowDungeonId(palaceId, dungeonId)), // currentDungeonId
-    writeSignedVarInt(3), // life
+    writeSignedVarInt(currentDungeonId), // currentDungeonId
+    writeSignedVarInt(life), // life
   ]);
 }
 
@@ -5319,23 +5485,24 @@ function loadMiscStageCatalog() {
   return cachedMiscStageCatalog;
 }
 
-function chooseShadowBattleForPalace(palaceId) {
+function chooseShadowBattleForPalace(palaceId, dungeonId = 0) {
   const catalog = loadMiscStageCatalog();
   const palace = catalog.shadowPalaceById.get(positiveInt(palaceId));
   const groupId = positiveInt(palace && palace.BATTLE_GROUP_ID);
   const battles = groupId ? catalog.shadowBattlesByGroup.get(groupId) : null;
-  return battles && battles.length ? battles[0] : null;
+  return battles && battles.length ? battles.find((battle) => positiveInt(battle.DUNGEON_ID) === positiveInt(dungeonId)) || battles[0] : null;
 }
 
-function chooseTrimDungeon(trimId, trimLevel) {
+function getTrimStageRows(trimId, trimLevel) {
   const catalog = loadMiscStageCatalog();
   const rows = catalog.trimDungeonsByTrimId.get(positiveInt(trimId)) || [];
   const level = Math.max(1, positiveInt(trimLevel) || 1);
-  return (
-    rows.find((row) => level >= Math.max(1, positiveInt(row.TrimLevel_Low) || 1) && level <= Math.max(1, positiveInt(row.TrimLevel_High) || level)) ||
-    rows[0] ||
-    null
-  );
+  return rows.filter((row) => level >= Math.max(1, positiveInt(row.TrimLevel_Low) || 1) && level <= Math.max(1, positiveInt(row.TrimLevel_High) || level));
+}
+
+function chooseTrimDungeon(trimId, trimLevel, dungeonId = 0) {
+  const rows = getTrimStageRows(trimId, trimLevel);
+  return rows.find((row) => positiveInt(row.DungeonID) === positiveInt(dungeonId)) || rows[0] || null;
 }
 
 function choosePhaseOrder(phase, phaseIndex = 0) {
@@ -5591,7 +5758,7 @@ function resolveMiscStageRequest(req = {}) {
   const palaceId = positiveInt(req.palaceID || req.palaceId);
   if (palaceId) {
     const palace = catalog.shadowPalaceById.get(palaceId);
-    const battle = chooseShadowBattleForPalace(palaceId);
+    const battle = chooseShadowBattleForPalace(palaceId, req.dungeonID);
     const dungeonID = positiveInt(battle && battle.DUNGEON_ID);
     return {
       mode: "shadow",
@@ -5626,7 +5793,7 @@ function resolveMiscStageRequest(req = {}) {
   if (trimId) {
     const trimLevel = Math.max(1, positiveInt(req.trimLevel || req.TrimLevel) || 1);
     const trim = catalog.trimById.get(trimId);
-    const trimDungeon = chooseTrimDungeon(trimId, trimLevel);
+    const trimDungeon = chooseTrimDungeon(trimId, trimLevel, req.dungeonID);
     const dungeonID = positiveInt(trimDungeon && trimDungeon.DungeonID);
     return {
       mode: "trim",
@@ -5637,7 +5804,7 @@ function resolveMiscStageRequest(req = {}) {
       stageID: dungeonID,
       stageReqItemId: positiveInt(trim && trim.m_StageReqItemID),
       stageReqItemCount: Math.max(0, Number(trim && trim.m_StageReqItemCount) || 0),
-      trimStageList: catalog.trimDungeonsByTrimId.get(trimId) || [],
+      trimStageList: getTrimStageRows(trimId, trimLevel),
     };
   }
 
@@ -5725,7 +5892,7 @@ function classifyMiscDungeon(dungeonID, stageRow = null, dungeon = null) {
       gameType: NGT_TRIM,
       trimId,
       trimLevel: Math.max(1, positiveInt(trimDungeon && trimDungeon.TrimLevel_Low) || 1),
-      trimStageList: catalog.trimDungeonsByTrimId.get(trimId) || [],
+      trimStageList: getTrimStageRows(trimId, Math.max(1, positiveInt(trimDungeon && trimDungeon.TrimLevel_Low) || 1)),
       stageReqItemId: positiveInt(trim && trim.m_StageReqItemID),
       stageReqItemCount: Math.max(0, Number(trim && trim.m_StageReqItemCount) || 0),
     };
@@ -5798,7 +5965,8 @@ function getGenericStageForRequest(req = {}) {
   }
   if (!dungeon && stageRow && String(stageRow.m_StageType || "") === "ST_PHASE") {
     const phase = loadMiscStageCatalog().phaseByStrId.get(String(stageRow.m_StageBattleStrID || ""));
-    const order = choosePhaseOrder(phase, 0);
+    const orders = loadMiscStageCatalog().phaseOrdersByGroup.get(positiveInt(phase && phase.m_PhaseGroupID)) || [];
+    const order = orders.find((entry) => positiveInt((getDungeonTableEntryByStrId(entry.m_DungeonStrID) || {}).m_DungeonID) === requestedDungeonId) || choosePhaseOrder(phase, 0);
     if (order && order.m_DungeonStrID) dungeon = getDungeonTableEntryByStrId(order.m_DungeonStrID);
   }
   if (!dungeon && requestedDungeonId > 0) {
@@ -5865,6 +6033,10 @@ function getGenericStageForRequest(req = {}) {
     exploreStageId: positiveInt(miscStage.exploreStageId),
     phaseId: positiveInt(miscStage.phaseId),
     phaseIndex: Math.max(0, Number(miscStage.phaseIndex || 0) || 0),
+    phaseDungeonIds: miscStage.mode === "phase"
+      ? (loadMiscStageCatalog().phaseOrdersByGroup.get(positiveInt((loadMiscStageCatalog().phaseById.get(miscStage.phaseId) || {}).m_PhaseGroupID)) || [])
+        .map((entry) => positiveInt((getDungeonTableEntryByStrId(entry.m_DungeonStrID) || {}).m_DungeonID)).filter(Boolean)
+      : [],
     shadowBattleOrder: positiveInt(miscStage.shadowBattleOrder),
     trimStageList: Array.isArray(miscStage.trimStageList) ? miscStage.trimStageList : [],
     stageReqItemId: positiveInt(miscStage.stageReqItemId),
@@ -5920,13 +6092,20 @@ function getDungeonRewardGroupIds(dungeonEntry) {
     .filter((groupId) => Number.isInteger(groupId) && groupId > 0);
 }
 
-function getDungeonUnitExpReward(dungeonId) {
-  const entry = getDungeonTableEntry(dungeonId);
+function getStageContentTemplet(dungeonId, stageId = 0) {
+  const stageRow = stageId ? getStageTableEntry(stageId) : null;
+  const phase = stageRow && String(stageRow.m_StageType || "") === "ST_PHASE"
+    ? loadMiscStageCatalog().phaseByStrId.get(String(stageRow.m_StageBattleStrID || "")) : null;
+  return phase || getDungeonTableEntry(dungeonId);
+}
+
+function getDungeonUnitExpReward(dungeonId, stageId = 0) {
+  const entry = getStageContentTemplet(dungeonId, stageId);
   return Math.max(0, Number(entry && entry.m_RewardUnitEXP) || 0);
 }
 
-function getDungeonUserExpReward(dungeonId) {
-  const entry = getDungeonTableEntry(dungeonId);
+function getDungeonUserExpReward(dungeonId, stageId = 0) {
+  const entry = getStageContentTemplet(dungeonId, stageId);
   return Math.max(0, Number(entry && entry.m_RewardUserEXP) || 0);
 }
 
@@ -5955,15 +6134,18 @@ function maybeGrantBattleStageClearLoot(replay, user, dungeonId, stageId, battle
 }
 
 function grantStageClearLoot(user, dungeonId, stageId, options = {}) {
-  const entry = getDungeonTableEntry(dungeonId);
+  const entry = getStageContentTemplet(dungeonId, stageId);
   const reward = createEmptyReward();
-  const unitExp = getDungeonUnitExpReward(dungeonId);
-  const userExp = getDungeonUserExpReward(dungeonId);
+  const unitExp = getDungeonUnitExpReward(dungeonId, stageId);
+  const userExp = getDungeonUserExpReward(dungeonId, stageId);
   const firstClear = !(
     user &&
     user.dungeonClear &&
     typeof user.dungeonClear === "object" &&
     user.dungeonClear[String(Number(dungeonId || 0))]
+  ) && !(
+    user && user.stagePlayData && user.stagePlayData[String(stageId)] &&
+    Number(user.stagePlayData[String(stageId)].totalPlayCount || user.stagePlayData[String(stageId)].playCount || 0) > 0
   );
   const result = {
     userUid: user && user.userUid ? String(toBigInt(user.userUid || 0)) : "",
@@ -6348,7 +6530,7 @@ function resolveDungeonMissionResults(dungeonId, options = {}) {
   }
   const win = Boolean(options.win);
   if (!win) return { missionResult1: false, missionResult2: false };
-  const entry = getDungeonTableEntry(dungeonId);
+  const entry = getStageContentTemplet(dungeonId, stageId);
   const battleState = options.battleState || {};
   return {
     missionResult1: evaluateDungeonMission(entry && entry.m_DGMissionType_1, entry && entry.m_DGMissionValue_1, battleState, win),
@@ -6620,7 +6802,13 @@ function spendStageReqItemCostForReplay(replay, user, stageId) {
   const key = `${Number(stageId || 0)}:${String(dynamicGame.gameUID || dynamicGame.gameUid || "")}`;
   replay.spentStageReqItemCosts = replay.spentStageReqItemCosts && typeof replay.spentStageReqItemCosts === "object" ? replay.spentStageReqItemCosts : {};
   if (replay.spentStageReqItemCosts[key]) return [];
+  const shadow = dynamicGame.miscMode === "shadow" ? ensureMiscStageState(user).shadow : null;
+  if (shadow && shadow.entryPaid) {
+    replay.spentStageReqItemCosts[key] = true;
+    return [];
+  }
   const costItems = spendStageReqItemCost(user, stageId, { dungeonID: dynamicGame.dungeonID });
+  if (shadow) shadow.entryPaid = true;
   replay.spentStageReqItemCosts[key] = true;
   return costItems;
 }
@@ -7674,13 +7862,14 @@ function buildFavoritesStageAckPayload(user, errorCode = 0) {
   return buildStageFavoritesAckPayload(user, errorCode);
 }
 
-function buildDefenceInfoAckPayload(defenceTempletId = 0) {
+function buildDefenceInfoAckPayload(defenceTempletId = 0, user = null) {
+  const saved = user && user.miscStages && user.miscStages.defence && user.miscStages.defence[String(defenceTempletId)] || {};
   return Buffer.concat([
     writeSignedVarInt(0), // errorCode
     writeSignedVarInt(Number(defenceTempletId || 0)), // defenceTempletId
-    writeSignedVarInt(0), // bestScore
-    writeBool(false), // m_MissionResult1
-    writeBool(false), // m_MissionResult2
+    writeSignedVarInt(Number(saved.bestScore || 0)), // bestScore
+    writeBool(Boolean(saved.missionResult1)), // m_MissionResult1
+    writeBool(Boolean(saved.missionResult2)), // m_MissionResult2
     writeSignedVarInt(0), // rank
     writeSignedVarInt(0), // rankPercent
     writeBool(false), // canReceiveRankReward
@@ -7777,11 +7966,13 @@ function getFierceSeasonTotalPoint(user, seasonRow = null) {
 function buildShadowPalaceStartAckPayload(req = {}, user = null) {
   const palaceId = positiveInt(req.palaceId || req.palaceID);
   const stage = getGenericStageForRequest({ palaceID: palaceId });
+  if (!palaceId || !stage || stage.miscMode !== "shadow") return Buffer.concat([writeSignedVarInt(1), writeSignedVarInt(0), writeObjectList([]), writeSignedVarInt(1)]);
   const state = ensureMiscStageState(user);
   if (state && palaceId) {
     state.shadow = state.shadow && typeof state.shadow === "object" ? state.shadow : {};
     state.shadow.currentPalaceId = palaceId;
-    state.shadow.life = Math.max(1, positiveInt(state.shadow.life) || 3);
+    state.shadow.life = 3;
+    state.shadow.entryPaid = false;
     state.shadow.rewardMultiply = 1;
     const palaceKey = String(palaceId);
     state.shadow.palaces = state.shadow.palaces && typeof state.shadow.palaces === "object" ? state.shadow.palaces : {};
@@ -7803,6 +7994,7 @@ function buildShadowPalaceStartAckPayload(req = {}, user = null) {
 function buildPhaseStartAckPayload(req = {}, user = null) {
   const stageId = positiveInt(req.stageId || req.stageID);
   const stage = getGenericStageForRequest({ stageID: stageId });
+  if (!stage || stage.miscMode !== "phase") return Buffer.concat([writeSignedVarInt(1), writeNullObject()]);
   const dungeonId = positiveInt(stage && stage.dungeonID);
   const phaseIndex = Math.max(0, Number(stage && stage.phaseIndex) || 0);
   const supportingUserUid = toBigInt(req.supportingUserUid || 0);
@@ -7813,6 +8005,8 @@ function buildPhaseStartAckPayload(req = {}, user = null) {
       phaseIndex,
       dungeonId,
       supportingUserUid: supportingUserUid.toString(),
+      deckIndex: req.deckIndex || null,
+      eventDeckData: req.eventDeckData ? JSON.parse(JSON.stringify(req.eventDeckData, (_key, value) => typeof value === "bigint" ? value.toString() : value)) : null,
     };
     if (USE_LOCAL_USER_DB) saveUserDb();
   }
@@ -7836,6 +8030,7 @@ function buildTrimStartAckPayload(req = {}, user = null) {
   const trimId = positiveInt(req.trimId || req.TrimID);
   const trimLevel = Math.max(1, positiveInt(req.trimLevel || req.TrimLevel) || 1);
   const stage = getGenericStageForRequest({ trimId, trimLevel });
+  if (!stage || stage.miscMode !== "trim" || !stage.trimStageList.length) return Buffer.concat([writeSignedVarInt(1), writeNullObject()]);
   const state = ensureMiscStageState(user);
   if (state && trimId) {
     state.trim = state.trim && typeof state.trim === "object" ? state.trim : {};
@@ -7843,6 +8038,8 @@ function buildTrimStartAckPayload(req = {}, user = null) {
       trimId,
       trimLevel,
       nextDungeonId: positiveInt(stage && stage.dungeonID),
+      trimStageList: stage && stage.trimStageList || [],
+      eventDeckList: req.eventDeckList ? JSON.parse(JSON.stringify(req.eventDeckList, (_key, value) => typeof value === "bigint" ? value.toString() : value)) : [],
     };
     if (USE_LOCAL_USER_DB) saveUserDb();
   }
@@ -7857,16 +8054,19 @@ function buildTrimModeState(stage = {}) {
   const trimLevel = Math.max(1, positiveInt(stage.trimLevel) || 1);
   const stageRows = Array.isArray(stage.trimStageList) && stage.trimStageList.length
     ? stage.trimStageList
-    : loadMiscStageCatalog().trimDungeonsByTrimId.get(trimId) || [];
-  const nextDungeonId = positiveInt(stage.dungeonID) || positiveInt((stageRows[0] || {}).DungeonID);
+    : getTrimStageRows(trimId, trimLevel);
+  const nextDungeonId = stage.nextDungeonId != null ? positiveInt(stage.nextDungeonId) : positiveInt(stage.dungeonID) || positiveInt((stageRows[0] || {}).DungeonID);
+  const last = stage.lastClearStage || {};
   return Buffer.concat([
     writeSignedVarInt(trimId),
     writeSignedVarInt(trimLevel),
     writeSignedVarInt(nextDungeonId),
-    writeNullableObject(buildTrimStageData(0, 0, 0, false)),
+    writeNullableObject(buildTrimStageData(last.index || 0, last.dungeonId || 0, last.score || 0, Boolean(last.isWin))),
     writeObjectList(
       stageRows.map((row, index) =>
-        writeNullableObject(buildTrimStageData(index, positiveInt(row && row.DungeonID), 0, false))
+        writeNullableObject(buildTrimStageData(index, positiveInt(row && row.DungeonID),
+          Number((stage.trimStageResults && stage.trimStageResults[index] || {}).score || 0),
+          Boolean((stage.trimStageResults && stage.trimStageResults[index] || {}).isWin)))
       )
     ),
   ]);
@@ -7953,7 +8153,7 @@ function buildFierceProfileAckPayload(req = {}, user = null) {
   return Buffer.concat([
     writeSignedVarInt(0),
     writeNullableObject(buildCommonProfileData(target, identity.userUid, identity.friendCode, identity.nickname)),
-    writeNullableObject(buildGuildSimpleData()),
+    writeNullableObject(buildGuildSimpleData(target)),
     writeString(String((target && target.friendIntro) || "")),
     writeNullableObject(buildFierceProfileData(profile, target)),
   ]);
@@ -8218,8 +8418,56 @@ function buildLeaderBoardFierceEntry(entry = {}) {
   return Buffer.concat([
     writeNullableObject(buildCommonProfileData(user, identity.userUid, identity.friendCode, identity.nickname)),
     writeSignedVarLong(BigInt(Math.max(0, Number(entry.point || 0) || 0))),
-    writeNullableObject(buildGuildSimpleData()),
+    writeNullableObject(buildGuildSimpleData(user)),
   ]);
+}
+
+function sendDefenceGameEnd(socket, options = {}) {
+  const replay = socket && socket.session && socket.session.gameReplay;
+  if (!replay || !replay.dynamicGame || replay.dynamicGame.miscMode !== "defence") return false;
+  if (replay.defenceGameEndPayload) return true;
+  const game = replay.dynamicGame;
+  const user = socket.session.user;
+  const battleState = options.battleState || replay.battleState || {};
+  const meta = options.meta || {};
+  const override = {
+    ...(extractManagedBattleRecords(meta).length ? { managedBattleRecords: extractManagedBattleRecords(meta) } : {}),
+    ...(extractManagedBattlePlayTime(meta) > 0 ? { managedBattlePlayTime: extractManagedBattlePlayTime(meta) } : {}),
+  };
+  const recordsState = buildBattleGameRecordState(battleState, override);
+  const playTime = getBattleEndPlayTime(battleState, override);
+  const managedWin = extractManagedBattleWin(meta);
+  const win = options.giveup || options.restart ? false : typeof managedWin === "boolean" ? managedWin : isBattleWin(battleState);
+  const missions = resolveDungeonMissionResults(game.dungeonID, { stageId: game.stageID, win, battleState: buildBattleMissionState(recordsState, { playTime }) });
+  const records = Array.isArray(recordsState.unitRecords) ? recordsState.unitRecords : Object.values(recordsState.unitRecords || {});
+  const gameScore = records.filter((record) => isBTeamType(record.teamType ?? record.TeamType ?? record.team))
+    .reduce((sum, record) => sum + Math.max(0, Number(record.recordDieCount ?? record.RecordDieCount ?? 0)), 0);
+  const state = ensureMiscStageState(user);
+  const defenceId = positiveInt(game.defenceTempletId) || positiveInt((classifyMiscDungeon(game.dungeonID) || {}).defenceTempletId);
+  const saved = state ? (state.defence ||= {})[String(defenceId)] || {} : {};
+  const bestScore = Math.max(Number(saved.bestScore || 0), gameScore);
+  if (state) state.defence[String(defenceId)] = {
+    ...saved, defenceTempletId: defenceId, bestScore, lastScore: gameScore,
+    missionResult1: Boolean(saved.missionResult1 || missions.missionResult1),
+    missionResult2: Boolean(saved.missionResult2 || missions.missionResult2),
+  };
+  const gameEndData = Buffer.concat([
+    writeBool(win), writeBool(Boolean(options.giveup)), writeBool(Boolean(options.restart)),
+    writeNullableObject(buildDungeonClearData(game.dungeonID, { stageId: game.stageID, win, ...missions })),
+    writeNullableObject(buildBattleDeckIndexData(replay)),
+    writeNullableObject(buildBattleGameRecordData(replay, recordsState, { playTime })),
+    writeObjectList([]), writeObjectList([]), writeSignedVarLong(0n), writeNullObject(), writeFloatLE(playTime),
+  ]);
+  const payload = Buffer.concat([
+    writeNullableObject(gameEndData),
+    writeNullableObject(Buffer.concat([writeSignedVarInt(defenceId), writeSignedVarInt(gameScore), writeSignedVarInt(bestScore)])),
+  ]);
+  replay.defenceGameEndPayload = payload;
+  replay.dynamicBattleResultSent = true;
+  stopGameSyncTimers(socket);
+  if (USE_LOCAL_USER_DB && user) saveUserDb();
+  sendServerGamePacket(socket, 3906, payload, "defence-game-end");
+  return true;
 }
 
 function buildDefenceGameStartAckPayload(socket, req = {}, options = {}) {
@@ -8227,6 +8475,12 @@ function buildDefenceGameStartAckPayload(socket, req = {}, options = {}) {
     options.stage ||
     getGenericStageForRequest({ defenceTempletId: positiveInt(req.defenceTempletId || req.defenceID || req.defenceId) });
   if (!stage || !stage.dungeonID) {
+    return Buffer.concat([writeSignedVarInt(1), writeNullObject(), writeObjectList([])]);
+  }
+  const replay = socket.session && socket.session.gameReplay;
+  const requestKey = JSON.stringify({ defenceTempletId: stage.defenceTempletId, eventDeckData: req.eventDeckData || null }, (_key, value) => typeof value === "bigint" ? value.toString() : value);
+  if (replay && replay.dynamicGame && !replay.dynamicBattleResultSent) {
+    if (replay.defenceGameStartKey === requestKey && replay.defenceGameStartAckPayload) return replay.defenceGameStartAckPayload;
     return Buffer.concat([writeSignedVarInt(1), writeNullObject(), writeObjectList([])]);
   }
   const loadReq = {
@@ -8239,8 +8493,14 @@ function buildDefenceGameStartAckPayload(socket, req = {}, options = {}) {
     rewardMultiply: 1,
   };
   const result = buildDynamicGameLoadPayload(socket, loadReq, stage);
+  if (!result || !result.payload) return Buffer.concat([writeSignedVarInt(1), writeNullObject(), writeObjectList([])]);
   const gameData = extractNullableGameDataFromGameLoadAckPayload(result && result.payload);
-  return Buffer.concat([writeSignedVarInt(0), gameData, writeObjectList([])]);
+  const payload = Buffer.concat([writeSignedVarInt(0), gameData, writeObjectList([])]);
+  if (replay) {
+    replay.defenceGameStartKey = requestKey;
+    replay.defenceGameStartAckPayload = payload;
+  }
+  return payload;
 }
 
 function buildExploreInfoAckPayload(req = {}, user = null) {
@@ -8997,10 +9257,10 @@ function buildMinimalJoinLobbyPayload(user) {
     writeDoubleLE(getShopTotalPaidAmount(user)),
     writeObjectList([]), // shopChainTabNestResetList
     writeNullableObject(buildPvpBanResultData()), // pvpBanResult
-    writeNullableObject(buildPvpStateData()), // asyncPvpState
+    writeNullableObject(localPvp.buildPvpState(user)), // asyncPvpState
     writeNullableObject(buildPvpStateData()), // leaguePvpState
     pvpPointChargeTime,
-    writeBool(false), // rankPvpOpen
+    writeBool(true), // rankPvpOpen
     writeBool(false), // leaguePvpOpen
     writeObjectList([]), // ReturningUserStates
     writeObjectList(getAllContractStates(user, clockCtx).map((state) => writeNullableObject(buildSerializedContractStateData(state)))), // contractState
@@ -9011,7 +9271,7 @@ function buildMinimalJoinLobbyPayload(user) {
     writeString(user.reconnectKey || ""),
     writeNullableObject(buildZlongUserData()), // zlongUserData
     writeNullableObject(buildBackgroundInfoData(user)), // backGroundInfo
-    writeNullableObject(buildPrivateGuildData()), // privateGuildData
+    writeNullableObject(buildPrivateGuildData(user)), // privateGuildData
     now, // blockMuteEndDate
     writeBool(false), // marketReviewCompletion
     writeBool(false), // fierceDailyRewardReceived
@@ -9024,7 +9284,13 @@ function buildMinimalJoinLobbyPayload(user) {
     writeNullObject(), // kakaoMissionData
     writeIntList(unlockedStageIds),
     writeObjectList(phaseClearDataList), // phaseClearDataList
-    writeNullObject(), // phaseModeState
+    user && user.miscStages && user.miscStages.phase
+      ? writeNullableObject(buildPhaseModeState(
+          user.miscStages.phase.stageId, user.miscStages.phase.phaseIndex,
+          user.miscStages.phase.dungeonId, user.miscStages.phase.totalPlayTime || 0,
+          user.miscStages.phase.supportingUserUid || "0"
+        ))
+      : writeNullObject(), // phaseModeState
     writeObjectList([]), // serverKillCountDataList
     writeObjectList([]), // killCountDataList
     writeObjectList(collection.buildCompletedUnitMissionPayloads(user).map(writeNullableObject)), // completedUnitMissions
@@ -9442,7 +9708,7 @@ function buildMinimalUserData(user, userUid, friendCode, nickname) {
     writeObjectMapInt(simulation.buildCounterCaseDataEntries(user)), // m_dicNKMCounterCaseData
     writeNullableObject(buildCraftData(user)), // m_CraftData
     writeObjectMapLong(buildEpisodeCompleteEntries(user)), // m_dicEpisodeCompleteData
-    writeNullableObject(buildPvpStateData()), // m_PvpData
+    writeNullableObject(localPvp.buildPvpState(user)), // m_PvpData
     writeNullObject(), // m_SyncPvpHistory
     writeNullObject(), // m_AsyncPvpHistory
     writeNullObject(), // m_EventPvpHistory
@@ -9677,13 +9943,8 @@ function buildShortCutInfoData() {
   return Buffer.concat([writeSignedVarInt(0), writeSignedVarInt(0)]);
 }
 
-function buildPrivateGuildData() {
-  return Buffer.concat([
-    writeSignedVarLong(0n),
-    writeSignedVarInt(0),
-    writeInt64LE(0n),
-    writeInt64LE(0n),
-  ]);
+function buildPrivateGuildData(user) {
+  return buildPersistedPrivateGuildData(user, { now: getServerNowDate(), eventDateKey: getServerEventDateKey(), userDb });
 }
 
 function buildGuildDungeonRewardInfoData() {
@@ -9744,7 +10005,7 @@ function buildUserProfileData(user, userUid, friendCode, nickname) {
     writeNullableObject(buildAsyncDeckData()),
     writeObjectList(((user && user.profileEmblems) || []).map((emblem) => writeNullableObject(buildProfileEmblemData(emblem)))), // emblems
     writeSignedVarInt(Number((user && (user.selfiFrameId || user.frameId)) || 0)),
-    writeNullableObject(buildGuildSimpleData()),
+    writeNullableObject(buildGuildSimpleData(user)),
     writeBool(Boolean(user && (user.hasOffice || user.office))),
     writeSignedVarInt(0),
   ]);
@@ -9847,8 +10108,8 @@ function buildAsyncUnitData() {
   ]);
 }
 
-function buildGuildSimpleData() {
-  return Buffer.concat([writeSignedVarLong(0n), writeString(""), writeSignedVarLong(0n)]);
+function buildGuildSimpleData(user) {
+  return buildPersistedGuildSimpleData(user);
 }
 
 function buildSupportUnitData(user) {
