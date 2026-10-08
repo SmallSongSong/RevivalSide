@@ -269,6 +269,14 @@ function buildStageFromTable(stageRow) {
     phaseId: Number(phase && phase.m_PhaseID || 0),
     phaseGroupId: Number(phase && phase.m_PhaseGroupID || 0),
     phaseOrder: Number(phaseOrder && phaseOrder.m_PhaseOrder || 0),
+    ...(phase ? {
+      gameType: 15,
+      miscMode: "phase",
+      phaseIndex: 0,
+      phaseDungeonIds: (PHASE_ORDERS_BY_GROUP_ID.get(Number(phase.m_PhaseGroupID)) || [])
+        .map((order) => Number((DUNGEON_BY_STR_ID.get(String(order.m_DungeonStrID)) || {}).m_DungeonID || 0))
+        .filter((id) => id > 0),
+    } : {}),
     phaseStrID: String(phase && phase.m_PhaseStrID || ""),
     eventDeckId: cutsceneOnly ? 0 : resolveEventDeckId(stageRow, dungeon, phase),
     isMainstreamStory: Boolean(episode.isMainstream),
@@ -323,6 +331,18 @@ const EPISODE1_STAGE_CHAIN = Object.freeze(
 );
 const MAIN_STORY_STAGE_BY_STAGE_ID = new Map(MAIN_STORY_STAGE_CHAIN.map((stage) => [stage.stageId, stage]));
 const MAIN_STORY_STAGE_BY_DUNGEON_ID = new Map(MAIN_STORY_STAGE_CHAIN.map((stage) => [stage.dungeonID, stage]));
+for (const stage of MAIN_STORY_STAGE_CHAIN) {
+  for (const [phaseIndex, dungeonID] of (stage.phaseDungeonIds || []).entries()) {
+    const dungeon = DUNGEON_ROWS.find((row) => Number(row && row.m_DungeonID) === dungeonID);
+    if (!dungeon) continue;
+    const mapStrID = String(dungeon.m_DungeonMapStrID || "");
+    MAIN_STORY_STAGE_BY_DUNGEON_ID.set(dungeonID, {
+      ...stage, dungeonID, phaseIndex, phaseOrder: phaseIndex + 1,
+      dungeonStrID: String(dungeon.m_DungeonStrID || ""),
+      mapStrID, mapID: MAP_ID_BY_STR_ID.get(mapStrID) || 0,
+    });
+  }
+}
 const EPISODE1_STAGE_BY_STAGE_ID = new Map(EPISODE1_STAGE_CHAIN.map((stage) => [stage.stageId, stage]));
 const EPISODE1_STAGE_BY_DUNGEON_ID = new Map(EPISODE1_STAGE_CHAIN.map((stage) => [stage.dungeonID, stage]));
 
@@ -399,7 +419,11 @@ function getMainStoryStageByDungeonId(dungeonId) {
 
 function getMainStoryStageForRequest(req) {
   if (!req) return null;
-  return getMainStoryStageByStageId(req.stageID) || getMainStoryStageByDungeonId(req.dungeonID);
+  const selected = getMainStoryStageByStageId(req.stageID);
+  if (selected && selected.phaseDungeonIds && selected.phaseDungeonIds.includes(Number(req.dungeonID))) {
+    return getMainStoryStageByDungeonId(req.dungeonID);
+  }
+  return selected || getMainStoryStageByDungeonId(req.dungeonID);
 }
 
 function getEpisode1StageByStageId(stageId) {
