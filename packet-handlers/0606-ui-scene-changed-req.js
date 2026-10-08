@@ -3,6 +3,7 @@ const { readSignedVarInt } = require("../modules/packet-codec");
 const localPvp = require("../modules/local-pvp");
 
 const NSI_GAME = 3;
+const NSI_HOME = 2;
 const NSI_OPERATION = 9;
 
 module.exports = {
@@ -16,6 +17,7 @@ module.exports = {
     const replay = socket.session && socket.session.gameReplay;
     const previousSceneId = replay ? Number(replay.lastSceneId || 0) : 0;
     if (replay) replay.lastSceneId = sceneId;
+    if (replay && replay.dynamicGame && sceneId === NSI_GAME) replay.battleSceneEntered = true;
     if (localPvp.isLocalPvpReplay(replay) && !replay.loadCompleteReceived && [26, 27].includes(sceneId)) {
       if (sceneId === 26) localPvp.notifyMatchReady(ctx, socket);
       return true;
@@ -26,9 +28,7 @@ module.exports = {
       replay.dynamicGame &&
       sceneId !== NSI_GAME &&
       !replay.dynamicBattleResultSent &&
-      (previousSceneId === NSI_GAME ||
-        replay.dynamicBattleTimer ||
-        (replay.loadCompleteReceived && replay.dynamicGame.initialUnitsSent))
+      (replay.battleSceneEntered || sceneId === NSI_HOME || sceneId === NSI_OPERATION)
     ) {
       if (typeof ctx.abandonDynamicBattle === "function") {
         ctx.abandonDynamicBattle(socket, `scene-${previousSceneId}-to-${sceneId}`);

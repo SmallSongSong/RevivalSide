@@ -3226,6 +3226,7 @@ function buildDynamicGameLoadPayload(socket, req, stage) {
   // start managed 822 sync before GAME_LOAD_COMPLETE_REQ (807) arrives.
   stopGameSyncTimers(socket);
   replay.loadCompleteReceived = false;
+  replay.battleSceneEntered = false;
   replay.pendingGameStartBootstrap = false;
   replay.pendingGameStartPackets = [];
   replay.dynamicBattlePaused = false;

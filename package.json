@@ -1,6 +1,6 @@
 {
   "name": "revivalside",
-  "version": "0.4.1-local.2",
+  "version": "0.4.1-local.3",
   "private": true,
   "description": "Local CounterSide revival server research tooling.",
   "scripts": {
@@ -45,6 +45,6 @@
     "build:modside": "npm --prefix modside-ui run build",
     "check:modside": "npm run build:modside && node --check tools/serve-modside.js && node tools/check-modside-server.js",
     "check:wiki": "node --check wiki/app.js && node --check tools/build-revivalside-wiki.js && node --check tools/ensure-wiki-assets.js && node --check tools/serve-revivalside-wiki.js && node tools/check-revivalside-wiki.js",
-    "check:local-gameplay": "node tools/check-battle-continuation.js && node tools/check-dive-continuation.js && node tools/check-explore-continuation.js && node tools/check-local-pvp.js && node tools/check-local-pvp-flow.js && node tools/check-local-guild.js && node tools/check-item-admin-repairs.js && node tools/check-csharp-host-response-spill.js && node tools/check-defence-continuation.js && node tools/check-managed-startup-gate.js"
+    "check:local-gameplay": "node tools/check-battle-continuation.js && node tools/check-dive-continuation.js && node tools/check-explore-continuation.js && node tools/check-local-pvp.js && node tools/check-local-pvp-flow.js && node tools/check-local-guild.js && node tools/check-item-admin-repairs.js && node tools/check-csharp-host-response-spill.js && node tools/check-defence-continuation.js && node tools/check-managed-startup-gate.js && node tools/check-phase-scene-transition.js"
   }
 }
