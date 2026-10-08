@@ -89,6 +89,7 @@ internal static class ManagedCombatBridge
         "m_DiveGameData",
         "m_DiveClearData",
         "m_DiveHistoryData",
+        "m_ShadowPalace",
         "m_companyBuffDataList",
         "backGroundInfo",
         "m_BirthDayData",
@@ -1022,6 +1023,7 @@ internal static class ManagedCombatBridge
                 runtime.SetField(gameData, "m_MapID", dynamicGame.MapID);
             }
             runtime.ApplyGameType(gameData, dynamicGame);
+            runtime.ApplyDiveDifficulty(gameData, dynamicGame);
             runtime.ApplyBattleConditionIds(gameData, dynamicGame.BattleConditionIds);
             var eventDeckId = data.Stage?.EventDeckId ?? dynamicGame.DungeonID;
             var usesEventDeck = ShouldApplyEventDeck(dynamicGame.StageID, dynamicGame.DungeonID, eventDeckId);
@@ -1053,6 +1055,8 @@ internal static class ManagedCombatBridge
             {
                 runtime.ApplyPlayerDeckTeamA(gameData, data.Stage?.PlayerDeck, dynamicGame.StageID, dynamicGame.DungeonID);
             }
+            if (dynamicGame.GameType == 5)
+                runtime.ApplyDiveAssistDecksTeamA(gameData, data.Stage?.DiveAssistDecks);
             runtime.ApplyEnemyDeckTeamB(gameData, runtimeData, data.Stage?.EnemyDeck);
             runtime.RefreshTutorialTeamADeck(gameData, dynamicGame.StageID, dynamicGame.DungeonID);
             runtime.ApplyPlayerIdentityTeamA(gameData, data.Stage?.PlayerDeck);
@@ -4088,6 +4092,37 @@ internal static class ManagedCombatBridge
             SetField(runtimeTeam, "m_fRespawnCost", 10f);
         }
 
+        public void ApplyDiveAssistDecksTeamA(object gameData, IEnumerable<PlayerDeckData>? assistDecks)
+        {
+            var team = GetField(gameData, "m_NKMGameTeamDataA");
+            if (team == null || assistDecks == null) return;
+            var used = new HashSet<long>();
+            if (GetField(team, "m_listUnitData") is IEnumerable primaryUnits)
+                foreach (var unit in primaryUnits)
+                    if (unit != null) used.Add(Convert.ToInt64(GetField(unit, "m_UnitUID") ?? 0, CultureInfo.InvariantCulture));
+            ClearCollectionField(team, "m_listAssistUnitData");
+            var assists = GetField(team, "m_listAssistUnitData");
+            foreach (var deck in assistDecks)
+            {
+                PopulatePlayerDeckEquipItems(team, deck);
+                var equipUids = GetPlayerDeckEquipUidSet(deck);
+                foreach (var source in deck.Units.Take(1))
+                {
+                    var uid = ParseLong(source.UnitUid);
+                    if (source.UnitId <= 0 || uid <= 0 || !used.Add(uid)) continue;
+                    var unit = CreateBasicUnit(source.UnitId, uid, Math.Max(1, source.Level), source.SkinId,
+                        source.TacticLevel, source.LimitBreakLevel, ParseLong(deck.UserUid), source.SkillLevels,
+                        GetValidUnitEquipItemUids(source, equipUids));
+                    SetField(unit, "reactorLevel", Math.Max(0, source.ReactorLevel));
+                    var stats = GetField(unit, "m_listStatEXP");
+                    ClearCollectionField(unit, "m_listStatEXP");
+                    foreach (var value in source.StatExp.Take(6)) AddCollectionItem(stats, value);
+                    AddCollectionItem(assists, unit);
+                }
+            }
+            RefreshTeamDeck(gameData, team, resetDeck: false);
+        }
+
         private void ApplyPlayerDeckTeam(object gameData, PlayerDeckData playerDeck, string teamField, string teamType)
         {
             var teamA = GetField(gameData, teamField);
@@ -4581,6 +4616,7 @@ internal static class ManagedCombatBridge
             SetField(gameData, "m_TeamASupply", (byte)2);
             SetField(gameData, "m_bBossDungeon", false);
             ApplyGameType(gameData, dynamicGame);
+            ApplyDiveDifficulty(gameData, dynamicGame);
             ApplyBattleConditionIds(gameData, dynamicGame.BattleConditionIds);
 
             var eventDeckId = data.Stage?.EventDeckId ?? dynamicGame.DungeonID;
@@ -5211,8 +5247,8 @@ internal static class ManagedCombatBridge
             {
                 $"errorCode={GetField(packet, "errorCode")}",
                 $"gameUID={GetField(gameData, "m_GameUID")} gameUnitUIDIndex={GetField(gameData, "m_GameUnitUIDIndex")} local={GetField(gameData, "m_bLocal")}",
-                $"gameType={GetField(gameData, "m_NKM_GAME_TYPE")} dungeonID={GetField(gameData, "m_DungeonID")} raidUID={GetField(gameData, "m_RaidUID")} mapID={GetField(gameData, "m_MapID")} teamASupply={GetField(gameData, "m_TeamASupply")} teamBLevelFix={GetField(gameData, "m_TeamBLevelFix")} doubleCostTime={GetField(gameData, "m_fDoubleCostTime")}",
-                $"teamA={DescribeTeam(GetField(gameData, "m_NKMGameTeamDataA"))}",
+                $"gameType={GetField(gameData, "m_NKM_GAME_TYPE")} dungeonID={GetField(gameData, "m_DungeonID")} raidUID={GetField(gameData, "m_RaidUID")} mapID={GetField(gameData, "m_MapID")} teamASupply={GetField(gameData, "m_TeamASupply")} teamBLevelFix={GetField(gameData, "m_TeamBLevelFix")} teamBLevelAdd={GetField(gameData, "m_TeamBLevelAdd")} bossDungeon={GetField(gameData, "m_bBossDungeon")} battleConditions={CountCollection(GetField(gameData, "m_BattleConditionIDs"))} doubleCostTime={GetField(gameData, "m_fDoubleCostTime")}",
+                $"teamA={DescribeTeam(GetField(gameData, "m_NKMGameTeamDataA"))} assistUnits={CountCollection(Field(GetField(gameData, "m_NKMGameTeamDataA"), "m_listAssistUnitData"))}",
                 $"teamB={DescribeTeam(GetField(gameData, "m_NKMGameTeamDataB"))}"
             };
             return string.Join(Environment.NewLine, lines);
@@ -5225,6 +5261,16 @@ internal static class ManagedCombatBridge
             if (gameType != 8 && gameType != 12) return;
             SetField(gameData, "m_TeamBLevelFix", dynamicGame.RaidLevel);
             SetField(gameData, "m_TeamBLevelAdd", 0);
+        }
+
+        public void ApplyDiveDifficulty(object gameData, DynamicGameState dynamicGame)
+        {
+            if (dynamicGame.GameType != 5 || dynamicGame.DiveStageID <= 0) return;
+            // Apply the exploration's level plan before native team creation;
+            // shared dungeon templates alone do not encode the chosen floor.
+            SetField(gameData, "m_TeamBLevelFix", 0);
+            SetField(gameData, "m_TeamBLevelAdd", dynamicGame.DiveLevelAdd);
+            SetField(gameData, "m_bBossDungeon", dynamicGame.DiveIsBoss);
         }
 
         public string DescribeGameSync(object packet)

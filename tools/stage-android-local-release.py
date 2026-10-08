@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "kmp/app/src/main/assets"
 UPSTREAM_SHA = "abad85109100ef5eafb8a9ebb317571d5618af4b2372f27971aa986e0cd33864"
 SOURCE_ROOTS = ("server", "modules", "packet-handlers", "combat-handler", "combat-simulator", "stages")
-SOURCE_FILES = ("cs-listener.js", "package.json", "package-lock.json", "packet-schema.json")
+SOURCE_FILES = ("cs-listener.js", "package.json", "package-lock.json", "packet-schema.json", "gameplay-jsons/generated/dive-dungeon-pool.json")
 FIXED_TIME = (2026, 10, 8, 0, 0, 0)
 
 
@@ -189,6 +189,6 @@ if __name__ == "__main__":
     parser.add_argument("--upstream-apk", type=Path, required=True)
     parser.add_argument("--combat-host-publish", type=Path, required=True)
     parser.add_argument("--native-source-ref", required=True)
-    parser.add_argument("--version", default="0.4.1-local.3")
+    parser.add_argument("--version", default="0.4.2a")
     parser.add_argument("--report", type=Path, default=ROOT / "exports/android-local-build.json")
     stage(parser.parse_args())

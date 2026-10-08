@@ -82,6 +82,11 @@ module.exports = {
         EventDeckId: 0,
         miscMode: "dive",
         diveStageID: diveGameLoad.diveStageID,
+        diveLevel: diveGameLoad.diveLevel,
+        diveLevelAdd: diveGameLoad.diveLevelAdd,
+        diveIsBoss: diveGameLoad.diveIsBoss,
+        diveAssistDecks: diveGameLoad.diveAssistDecks,
+        battleConditionIds: [...new Set([...(diveStage.battleConditionIds || []), ...(diveGameLoad.diveBattleConditionIds || [])])],
         diveDeckIndex: diveGameLoad.deckIndex,
         diveUid: diveGameLoad.diveUid,
         diveSlotSetIndex: diveGameLoad.diveSlotSetIndex,
@@ -92,7 +97,7 @@ module.exports = {
         cutsceneOnly: false,
       };
       console.log(
-        `[game-load:dive] diveStageID=${diveGameLoad.diveStageID} dungeonID=${diveGameLoad.dungeonID} deck=${diveGameLoad.deckIndex}`
+        `[game-load:dive] diveStageID=${diveGameLoad.diveStageID} dungeonID=${diveGameLoad.dungeonID} deck=${diveGameLoad.deckIndex} node=${diveGameLoad.diveDistance} boss=${diveGameLoad.diveIsBoss ? 1 : 0} enemyLevel=${diveGameLoad.diveLevel} levelAdd=${diveGameLoad.diveLevelAdd}`
       );
     } else if (requestedFierceBossId > 0 && ctx.getGenericStageForRequest) {
       stage = ctx.getGenericStageForRequest(req);

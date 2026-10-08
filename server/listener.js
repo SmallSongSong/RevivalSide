@@ -61,7 +61,9 @@ const {
   DEFAULT_LOCAL_SHOP_BALANCE,
   RESOURCE_ITEM_IDS,
   ensureInventory,
+  getMiscItem,
   getMiscItems,
+  grantMiscItem,
   getSkinIds,
   removeDebugSeededCommonResources,
   seedShopCurrency,
@@ -3287,7 +3289,7 @@ function buildDynamicGameLoadPayload(socket, req, stage) {
     if (gameType) replay.dynamicGame.gameType = gameType;
     if (activeStage.playerDeck) replay.dynamicGame.playerDeck = activeStage.playerDeck;
     if (activeStage.enemyDeck) replay.dynamicGame.enemyDeck = activeStage.enemyDeck;
-    for (const key of ["diveUid", "diveSlotSetIndex", "diveSlotIndex", "diveDistance", "diveDeckIndex", "shipInitHp", "phaseIndex", "phaseDungeonIds", "trimStageList", "shadowBattleOrder", "palaceID", "exploreRunId", "exploreBattleToken", "exploreStageId", "exploreZoneId", "exploreStep", "exploreSlotIndex", "exploreID"]) {
+    for (const key of ["diveUid", "diveSlotSetIndex", "diveSlotIndex", "diveDistance", "diveDeckIndex", "diveLevel", "diveLevelAdd", "diveIsBoss", "shipInitHp", "phaseIndex", "phaseDungeonIds", "trimStageList", "shadowBattleOrder", "palaceID", "exploreRunId", "exploreBattleToken", "exploreStageId", "exploreZoneId", "exploreStep", "exploreSlotIndex", "exploreID"]) {
       if (activeStage[key] != null) replay.dynamicGame[key] = activeStage[key];
     }
     if (activeStage.worldmapEventID) replay.dynamicGame.worldmapEventID = Number(activeStage.worldmapEventID || 0);
@@ -3968,27 +3970,13 @@ function recordMiscStageClearForUser(user, dungeonId, stageId, battleState = {})
   const playTime = Math.max(0, Math.round(Number((battleState && (battleState.gameTime || battleState.GameTime)) || 0)));
   if (miscStage.mode === "shadow") {
     state.shadow = state.shadow && typeof state.shadow === "object" ? state.shadow : {};
-    state.shadow.currentPalaceId = positiveInt(miscStage.palaceID);
-    state.shadow.life = Math.max(1, positiveInt(state.shadow.life) || 3);
     state.shadow.rewardMultiply = Math.max(1, positiveInt(state.shadow.rewardMultiply) || 1);
-    state.shadow.palaces = state.shadow.palaces && typeof state.shadow.palaces === "object" ? state.shadow.palaces : {};
-    const palaceKey = String(positiveInt(miscStage.palaceID));
-    const palace = state.shadow.palaces[palaceKey] && typeof state.shadow.palaces[palaceKey] === "object" ? state.shadow.palaces[palaceKey] : {};
-    const dungeonDataList = Array.isArray(palace.dungeonDataList) ? palace.dungeonDataList.slice() : [];
-    const existingIndex = dungeonDataList.findIndex((entry) => positiveInt(entry && entry.dungeonId) === positiveInt(dungeonId));
-    const previous = existingIndex >= 0 ? dungeonDataList[existingIndex] : {};
-    const data = {
-      dungeonId: positiveInt(dungeonId),
-      recentTime: playTime,
-      bestTime: previous.bestTime > 0 && playTime > 0 ? Math.min(previous.bestTime, playTime) : playTime || positiveInt(previous.bestTime),
-    };
-    if (existingIndex >= 0) dungeonDataList[existingIndex] = data;
-    else dungeonDataList.push(data);
-    state.shadow.palaces[palaceKey] = {
-      palaceId: positiveInt(miscStage.palaceID),
-      currentDungeonId: nextShadowDungeonId(miscStage.palaceID, dungeonId),
-      dungeonDataList,
-    };
+    state.shadow.palaces ||= {};
+    const palaceId = positiveInt(miscStage.palaceID);
+    const palace = state.shadow.palaces[String(palaceId)] ||= { palaceId };
+    recordShadowPalaceBattleTime(palace, dungeonId, playTime);
+    palace.currentDungeonId = nextShadowDungeonId(palaceId, dungeonId);
+    state.shadow.currentPalaceId = palace.currentDungeonId ? palaceId : 0;
     return true;
   }
   if (miscStage.mode === "fierce") {
@@ -4260,11 +4248,11 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
         ? []
       : isExploreGame
         ? []
+      : dynamicGame.miscMode === "shadow"
+        ? []
       : isPhaseGame && Number(dynamicGame.phaseIndex || 0) > 0
         ? []
       : trimResult && trimResult.index > 0
-        ? []
-      : dynamicGame.miscMode === "shadow" && Number(dynamicGame.shadowBattleOrder || 1) > 1
         ? []
       : spendStageReqItemCostForReplay(replay, override.user, stageId);
   const episodeCompleteData = !isRaidGame && !isDiveGame && !isPracticeGame && !isExploreGame && win && stageCompleted ? buildMainStoryEpisodeCompleteDataForStage(override.user, stageId) : null;
@@ -4334,7 +4322,8 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
   replay.dynamicGameEndPayload = payload;
   if (phaseResult && !phaseResult.completed && USE_LOCAL_USER_DB) saveUserDb();
   if (trimResult && !trimResult.completed && USE_LOCAL_USER_DB) saveUserDb();
-  if (dynamicGame.miscMode === "shadow" && !win && USE_LOCAL_USER_DB) saveUserDb();
+  if (diveBattleResult && USE_LOCAL_USER_DB) saveUserDb();
+  if (dynamicGame.miscMode === "shadow" && USE_LOCAL_USER_DB) saveUserDb();
   if (isExploreGame && USE_LOCAL_USER_DB) saveUserDb();
   return payload;
 }
@@ -4597,25 +4586,77 @@ function buildRaidBossResultData(result = {}) {
 function buildShadowGameResultData(dynamicGame = {}, battleState = {}, options = {}) {
   const palaceId = positiveInt(dynamicGame.palaceID || dynamicGame.palaceId);
   const dungeonId = palaceId ? positiveInt(dynamicGame.dungeonID) : 0;
-  const recentTime = Math.max(0, Math.round(Number((battleState && (battleState.gameTime || battleState.GameTime)) || 0)));
+  const recentTime = Math.max(1, Math.round(Number((battleState && (battleState.gameTime || battleState.GameTime)) || 0)));
   const win = isBattleWin(battleState);
   const shadow = palaceId && options.user ? (ensureMiscStageState(options.user).shadow ||= {}) : null;
   const life = shadow ? Math.max(0, Number(shadow.life ?? 3) - (win ? 0 : 1)) : 3;
   const currentDungeonId = win ? nextShadowDungeonId(palaceId, dungeonId) : dungeonId;
+  let completion = null;
+  let dungeonData = null;
   if (shadow) {
     shadow.life = life;
     shadow.palaces ||= {};
     const palace = shadow.palaces[String(palaceId)] ||= { palaceId };
     palace.currentDungeonId = currentDungeonId;
+    if (win) {
+      dungeonData = recordShadowPalaceBattleTime(palace, dungeonId, recentTime);
+      if (!currentDungeonId) completion = completeShadowPalaceRun(options.user, shadow, palace);
+    }
+    if (!life) shadow.currentPalaceId = 0;
   }
   return Buffer.concat([
     writeSignedVarInt(palaceId), // palaceId
-    writeNullableObject(buildPalaceDungeonData(dungeonId, recentTime, recentTime)),
-    writeNullObject(), // rewardData
-    writeBool(false), // newRecord
+    win ? writeNullableObject(buildPalaceDungeonData(dungeonId, recentTime, dungeonData && dungeonData.bestTime)) : writeNullObject(),
+    completion ? writeNullableObject(buildSerializedRewardData(completion.reward)) : writeNullObject(), // non-null reward ends the client palace run
+    writeBool(Boolean(completion && completion.newRecord)),
     writeSignedVarInt(currentDungeonId), // currentDungeonId
     writeSignedVarInt(life), // life
   ]);
+}
+
+function recordShadowPalaceBattleTime(palace, dungeonId, recentTime) {
+  palace.dungeonDataList = Array.isArray(palace.dungeonDataList) ? palace.dungeonDataList : [];
+  let data = palace.dungeonDataList.find((entry) => positiveInt(entry && entry.dungeonId) === positiveInt(dungeonId));
+  if (!data) {
+    data = { dungeonId: positiveInt(dungeonId), recentTime: 0, bestTime: 0 };
+    palace.dungeonDataList.push(data);
+  }
+  data.recentTime = Math.max(1, Math.round(Number(recentTime) || 0));
+  return data;
+}
+
+function completeShadowPalaceRun(user, shadow, palace) {
+  const templet = loadMiscStageCatalog().shadowPalaceById.get(positiveInt(palace.palaceId));
+  const battles = templet ? loadMiscStageCatalog().shadowBattlesByGroup.get(positiveInt(templet.BATTLE_GROUP_ID)) || [] : [];
+  const data = battles.map((battle) => (palace.dungeonDataList || []).find((entry) => positiveInt(entry.dungeonId) === positiveInt(battle.DUNGEON_ID)));
+  if (!battles.length || positiveInt(palace.currentDungeonId) || data.some((entry) => !entry || !(entry.recentTime > 0))) return null;
+  const recentTotal = data.reduce((sum, entry) => sum + entry.recentTime, 0);
+  const bestTotal = data.reduce((sum, entry) => sum + (Number(entry.bestTime) || 0), 0);
+  const newRecord = data.some((entry) => !(entry.bestTime > 0)) || recentTotal < bestTotal;
+  if (newRecord) data.forEach((entry) => { entry.bestTime = entry.recentTime; });
+  if (positiveInt(shadow.currentPalaceId) === positiveInt(palace.palaceId)) shadow.currentPalaceId = 0;
+  palace.completedAt ||= new Date().toISOString();
+  const reward = createEmptyReward();
+  if (!palace.completionRewardGranted) {
+    const multiply = Math.max(1, positiveInt(shadow.rewardMultiply) || 1);
+    const regDate = dateTimeBinaryNow();
+    for (let index = 1; index <= 3; index += 1) {
+      const rewardType = String(templet[`COMPLETE_REWARD_TYPE_${index}`] || "");
+      const rewardId = positiveInt(templet[`COMPLETE_REWARD_ID_${index}`]);
+      const quantity = positiveInt(templet[`COMPLETE_REWARD_QUANTITY_${index}`]) * multiply;
+      if (!rewardType || rewardType === "RT_NONE" || !rewardId || !quantity) continue;
+      mergeReward(reward, grantRewardByType({ dateTimeBinaryNow }, user, rewardType, rewardId, quantity, quantity, 0, { regDate, expandPackages: false }));
+    }
+    palace.completionRewardGranted = true;
+  }
+  return { reward, newRecord };
+}
+
+function repairCompletedShadowPalaceState(user) {
+  const shadow = user && user.miscStages && user.miscStages.shadow;
+  const palace = shadow && shadow.palaces && shadow.palaces[String(positiveInt(shadow.currentPalaceId))];
+  // Older local saves completed every battle without the client completion signal.
+  return Boolean(palace && !positiveInt(palace.currentDungeonId) && completeShadowPalaceRun(user, shadow, palace));
 }
 
 function buildPalaceDungeonData(dungeonId = 0, recentTime = 0, bestTime = 0) {
@@ -7981,6 +8022,8 @@ function buildShadowPalaceStartAckPayload(req = {}, user = null) {
       ...(state.shadow.palaces[palaceKey] || {}),
       palaceId,
       currentDungeonId: positiveInt(stage && stage.dungeonID),
+      completionRewardGranted: false,
+      dungeonDataList: (state.shadow.palaces[palaceKey]?.dungeonDataList || []).map((data) => ({ ...data, recentTime: 0 })),
     };
     if (USE_LOCAL_USER_DB) saveUserDb();
   }
@@ -9214,7 +9257,10 @@ function buildMinimalJoinLobbyPayload(user) {
     now: lobbyNow,
     initializeMissing: true,
   });
-  if (refreshedStamina.changed && USE_LOCAL_USER_DB) saveUserDb();
+  const modeEntriesRestored = ensureLocalModeEntryItems(user, lobbyNow);
+  const diveProgressRepaired = worldMap.repairActiveDiveSupply(user, { now: lobbyNow });
+  const shadowProgressRepaired = repairCompletedShadowPalaceState(user);
+  if ((refreshedStamina.changed || modeEntriesRestored || diveProgressRepaired || shadowProgressRepaired) && USE_LOCAL_USER_DB) saveUserDb();
   const now = writeInt64LE(lobbyNow);
   const lastEterniumSupplyTakeTime = writeInt64LE(
     stamina.getChargeItemLastUpdateDate(user, stamina.ITEM_IDS.ETERNIUM, lobbyNow)
@@ -9315,6 +9361,17 @@ function buildMinimalJoinLobbyPayload(user) {
     writeNullableObject(buildSupportUnitData(user)), // supportUnitProfileData
     writeBool(false), // hasRemainReward
   ]);
+}
+
+function ensureLocalModeEntryItems(user, regDate) {
+  const floors = [[19, 1n], [stamina.ITEM_IDS.ASYNC_PVP_TICKET, 6n]];
+  let changed = false;
+  for (const [itemId, minimum] of floors) {
+    const item = getMiscItem(user, itemId);
+    const total = toBigInt(item && item.countFree || 0) + toBigInt(item && item.countPaid || 0);
+    if (total < minimum && grantMiscItem(user, itemId, minimum - total, 0n, { regDate: String(regDate) })) changed = true;
+  }
+  return changed;
 }
 
 function buildJoinLobbyAckPayload(user) {

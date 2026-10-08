@@ -22,8 +22,8 @@ android {
         applicationId = "dev.revivalside.officialprofilecapture"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.4.1-local.3"
+        versionCode = 11
+        versionName = "0.4.2a"
 
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")

@@ -62,7 +62,7 @@ The tool patches both the fixed-width IL2CPP endpoint and Gamebase's launching r
 
 ### Local fork test releases
 
-The local fork uses version `0.4.1-local.3` (`versionCode=7`). This release retains
+The local fork uses version `0.4.2a` (`versionCode=11`). This release retains
 the verified upstream Android `v0.4.0a` shell: DEX classes, resources, native
 libraries, and game data. It rebuilds the shared listener archive from current
 fork sources and compiles the managed combat host from current C# sources.

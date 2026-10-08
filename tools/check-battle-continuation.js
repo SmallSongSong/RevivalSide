@@ -8,6 +8,8 @@ const story = require("../stages/mainStoryStage");
 const codec = require("../modules/packet-codec");
 const { readGameplayTableRecords } = require("../modules/gameplay-jsons");
 const explore = require("../modules/explore");
+const rewardModule = require("../modules/reward");
+const { getMiscItem } = require("../modules/inventory");
 const { loadPacketHandlers } = require("../server/packetHandlerLoader");
 const rootDir = path.join(__dirname, "..");
 const handlers = loadPacketHandlers([path.join(rootDir, "packet-handlers"), path.join(rootDir, "modules")], { rootDir });
@@ -274,18 +276,125 @@ assert.equal(trimUser.miscStages.trim.lastClear.trimLevel, 5, "retain the chosen
 const skipTrimUser = { miscStages: { trim: { current: { trimId: 101, trimLevel: 5, trimStageList: trimRows, nextDungeonId: 7001001 } } } };
 assert.equal(attemptGameLoad(skipTrimUser, { stageID: 7001003, dungeonID: 7001003 }).loaded, 0, "trim cannot skip its pending stage");
 
+Object.assign(sandbox, {
+  createEmptyReward: rewardModule.createEmptyReward,
+  mergeReward: rewardModule.mergeReward,
+  grantRewardByType: rewardModule.grantRewardByType,
+  dateTimeBinaryNow: () => 0n,
+});
+let shadowRewardBytes = null;
+sandbox.buildSerializedRewardData = (reward) => (shadowRewardBytes = codec.buildRewardData(reward));
 vm.runInContext(sourceFunctions("buildShadowGameResultData", "buildFierceResultState"), sandbox);
+vm.runInContext(sourceFunctions("buildShadowPalaceStartAckPayload", "buildPhaseStartAckPayload"), sandbox);
+vm.runInContext(sourceFunctions("buildShadowPalaceDataForUser", "buildJukeboxData"), sandbox);
+vm.runInContext(sourceFunctions("recordMiscStageClearForUser", "buildDungeonSkipAckPayload"), sandbox);
 const shadowBattles = sandbox.loadMiscStageCatalog().shadowBattlesByGroup.get(1);
-assert(shadowBattles.length > 1);
+assert.equal(shadowBattles.length, 5);
 assert.equal(sandbox.resolveMiscStageRequest({ palaceID: 1001, dungeonID: shadowBattles[1].DUNGEON_ID }).shadowBattleOrder, 2);
-const shadowUser = { miscStages: { shadow: { life: 3 } } };
+const shadowUser = { miscStages: { shadow: { currentPalaceId: 1001, life: 3 } } };
 const shadowGame = { palaceID: 1001, dungeonID: shadowBattles[0].DUNGEON_ID };
-sandbox.buildShadowGameResultData(shadowGame, { win: false, gameTime: 10 }, { user: shadowUser });
+function shadowResult(game, state, target = shadowUser) {
+  shadowRewardBytes = null;
+  const bytes = sandbox.buildShadowGameResultData(game, state, { user: target });
+  let offset = 0;
+  function read(reader) { const data = reader(bytes, offset); offset = data.offset; return data.value; }
+  const palaceId = read(codec.readSignedVarInt);
+  const dungeonData = read(codec.readBool) ? { dungeonId: read(codec.readSignedVarInt), recentTime: read(codec.readSignedVarInt), bestTime: read(codec.readSignedVarInt) } : null;
+  const reward = read(codec.readBool);
+  if (reward) { assert(shadowRewardBytes); offset += shadowRewardBytes.length; }
+  const newRecord = read(codec.readBool);
+  const currentDungeonId = read(codec.readSignedVarInt);
+  const life = read(codec.readSignedVarInt);
+  assert.equal(offset, bytes.length, "shadow result protocol must consume exactly its bytes");
+  return { palaceId, dungeonData, reward, newRecord, currentDungeonId, life };
+}
+const lossResult = shadowResult(shadowGame, { win: false, gameTime: 10 });
+assert.equal(lossResult.dungeonData, null, "a failed battle cannot add a cleared client dungeon");
+assert.equal(lossResult.reward, false);
 assert.equal(shadowUser.miscStages.shadow.life, 2);
 assert.equal(shadowUser.miscStages.shadow.palaces[1001].currentDungeonId, shadowGame.dungeonID, "a shadow loss keeps the same battle");
-sandbox.buildShadowGameResultData(shadowGame, { win: true, gameTime: 10 }, { user: shadowUser });
-assert.equal(shadowUser.miscStages.shadow.life, 2);
-assert.equal(shadowUser.miscStages.shadow.palaces[1001].currentDungeonId, shadowBattles[1].DUNGEON_ID, "a shadow win advances");
+// The Android DLL's UpdateUserData applies recentTime during the run, then
+// clears currentPalaceId and promotes every bestTime only for a non-null reward.
+const shadowClient = { currentPalaceId: 1001, dungeonDataList: [] };
+for (const [index, battle] of shadowBattles.entries()) {
+  const result = shadowResult({ palaceID: 1001, dungeonID: battle.DUNGEON_ID }, { win: true, gameTime: 10 + index });
+  shadowClient.dungeonDataList.push({ dungeonId: result.dungeonData.dungeonId, recentTime: result.dungeonData.recentTime, bestTime: 0 });
+  if (result.reward) {
+    shadowClient.currentPalaceId = 0;
+    if (result.newRecord) shadowClient.dungeonDataList.forEach((data) => { data.bestTime = data.recentTime; });
+  }
+  assert.equal(result.reward, index === 4, "only the fifth win signals whole-palace completion");
+  assert.equal(result.newRecord, index === 4, "first whole-palace clear sets every client bestTime");
+  if (index < 4) assert.equal(shadowUser.miscStages.shadow.palaces[1001].currentDungeonId, shadowBattles[index + 1].DUNGEON_ID);
+  sandbox.recordMiscStageClearForUser(shadowUser, battle.DUNGEON_ID, battle.DUNGEON_ID, { gameTime: 10 + index });
+}
+assert.equal(shadowClient.currentPalaceId, 0, "native client must leave the in-progress chapter");
+assert.equal(shadowClient.dungeonDataList.filter((data) => data.bestTime > 0).length, 5, "native IsClearPalace must unlock palace #2");
+assert.equal(shadowUser.miscStages.shadow.currentPalaceId, 0, "later stage progress recording must preserve completed palace state");
+assert.equal(BigInt(getMiscItem(shadowUser, 20).countFree), 15n);
+assert.equal(BigInt(getMiscItem(shadowUser, 1).countFree), 108000n);
+assert.equal(BigInt(getMiscItem(shadowUser, 2013).countFree), 20n);
+const persistedShadow = JSON.parse(JSON.stringify(shadowUser, (_key, value) => typeof value === "bigint" ? String(value) : value));
+sandbox.buildShadowPalaceDataForUser(persistedShadow);
+assert.equal(persistedShadow.miscStages.shadow.currentPalaceId, 0);
+assert.equal(persistedShadow.miscStages.shadow.palaces[1001].dungeonDataList.filter((data) => data.bestTime > 0).length, 5);
+function readShadowLobbyState(target) {
+  const payload = sandbox.buildShadowPalaceDataForUser(target);
+  let offset = 0;
+  function read(reader) { const data = reader(payload, offset); offset = data.offset; return data.value; }
+  const currentPalaceId = read(codec.readSignedVarInt);
+  const life = read(codec.readSignedVarInt);
+  const palaces = [];
+  const count = read(codec.readVarInt);
+  for (let index = 0; index < count; index++) {
+    assert(read(codec.readBool));
+    const palace = { palaceId: read(codec.readSignedVarInt), currentDungeonId: read(codec.readSignedVarInt), dungeonDataList: [] };
+    const dungeonCount = read(codec.readVarInt);
+    for (let dungeonIndex = 0; dungeonIndex < dungeonCount; dungeonIndex++) {
+      assert(read(codec.readBool));
+      palace.dungeonDataList.push({ dungeonId: read(codec.readSignedVarInt), recentTime: read(codec.readSignedVarInt), bestTime: read(codec.readSignedVarInt) });
+    }
+    palaces.push(palace);
+  }
+  const rewardMultiply = read(codec.readSignedVarInt);
+  assert.equal(offset, payload.length, "lobby shadow state must preserve its exact protocol boundary");
+  return { currentPalaceId, life, palaces, rewardMultiply };
+}
+const shadowClientAfterLogin = readShadowLobbyState(persistedShadow);
+assert.equal(shadowClientAfterLogin.palaces[0].dungeonDataList.filter((data) => data.bestTime > 0).length, 5, "login must copy local palace best times into the merged client ACK");
+sandbox.completeShadowPalaceRun(shadowUser, shadowUser.miscStages.shadow, shadowUser.miscStages.shadow.palaces[1001]);
+assert.equal(BigInt(getMiscItem(shadowUser, 20).countFree), 15n, "duplicate completion cannot grant the chapter reward again");
+const oldShadow = { miscStages: { shadow: { currentPalaceId: 1001, life: 3, palaces: { 1001: { palaceId: 1001, currentDungeonId: 0, dungeonDataList: shadowBattles.map((battle) => ({ dungeonId: battle.DUNGEON_ID, recentTime: 10, bestTime: 0 })) } } } } };
+sandbox.repairCompletedShadowPalaceState(oldShadow);
+sandbox.buildShadowPalaceDataForUser(oldShadow);
+assert.equal(oldShadow.miscStages.shadow.currentPalaceId, 0, "login recovers the already-finished old local save");
+assert.equal(oldShadow.miscStages.shadow.palaces[1001].dungeonDataList.filter((data) => data.bestTime > 0).length, 5);
+assert.equal(BigInt(getMiscItem(oldShadow, 20).countFree), 15n);
+sandbox.repairCompletedShadowPalaceState(oldShadow);
+sandbox.buildShadowPalaceDataForUser(oldShadow);
+assert.equal(BigInt(getMiscItem(oldShadow, 20).countFree), 15n, "repeat login does not duplicate recovered rewards");
+sandbox.buildShadowPalaceStartAckPayload({ palaceID: 1001 }, shadowUser);
+assert(shadowUser.miscStages.shadow.palaces[1001].dungeonDataList.every((data) => data.recentTime === 0 && data.bestTime > 0), "a replay resets run times while preserving the previous clear");
+assert.equal(shadowUser.miscStages.shadow.palaces[1001].completionRewardGranted, false);
+for (const battle of shadowBattles) {
+  const result = shadowResult({ palaceID: 1001, dungeonID: battle.DUNGEON_ID }, { win: true, gameTime: 20 });
+  const clientDungeon = shadowClientAfterLogin.palaces[0].dungeonDataList.find((data) => data.dungeonId === result.dungeonData.dungeonId);
+  clientDungeon.recentTime = result.dungeonData.recentTime;
+  assert.equal(result.newRecord, false, "a slower replay cannot replace the existing full-run record");
+}
+assert.equal(shadowClientAfterLogin.palaces[0].dungeonDataList.filter((data) => data.bestTime > 0).length, 5, "native unlock still depends on local bestTime from login when newRecord is false");
+assert.equal(BigInt(getMiscItem(shadowUser, 20).countFree), 30n, "a fresh complete replay receives exactly one chapter reward");
+assert.deepEqual(Array.from(shadowUser.miscStages.shadow.palaces[1001].dungeonDataList, (data) => data.bestTime), [10, 11, 12, 13, 14], "a slower full run preserves the previous full-run record");
+const nativeFixturesIndex = process.argv.indexOf("--native-fixtures");
+if (nativeFixturesIndex >= 0) {
+  const fixturePath = process.argv[nativeFixturesIndex + 1];
+  assert(fixturePath && !fixturePath.startsWith("--"), "--native-fixtures requires an output path");
+  fs.writeFileSync(fixturePath, JSON.stringify([
+    { name: "fresh-five-win-completion", shadowPayload: sandbox.buildShadowPalaceDataForUser(persistedShadow).toString("base64"), expectedUnlock: true },
+    { name: "existing-record-after-slower-replay", shadowPayload: sandbox.buildShadowPalaceDataForUser(shadowUser).toString("base64"), expectedUnlock: true },
+    { name: "new-empty-palace", shadowPayload: sandbox.buildShadowPalaceDataForUser({}).toString("base64"), expectedUnlock: false },
+  ], null, 2));
+}
 let shadowTicketCount = 0;
 sandbox.spendStageReqItemCost = () => { shadowTicketCount++; return [{ itemId: 19, count: 1 }]; };
 vm.runInContext(sourceFunctions("spendStageReqItemCostForReplay", "buildPhaseClearData"), sandbox);
@@ -352,4 +461,4 @@ assert.strictEqual(sandbox.buildDynamicGameEndNotPayload(exploreReplay, { user: 
 assert.equal(rewards, rewardBeforeExplore, "exploration rewards cannot be delivered through the story reward path");
 assert.equal(sandbox.maybeRecordDynamicBattleClear({ session: { user: exploreUser, gameReplay: exploreReplay } }), false);
 assert.equal(JSON.stringify(exploreUser.army), originalExploreArmy, "exploration's temporary units remain separate from the real roster");
-console.log("Battle continuation checks passed: 18 phase chains/53 child battles, phase HP/time/rewards, trim level and chain, shadow retry/ticket, duplicate bootstrap/results, and restart.");
+console.log("Battle continuation checks passed: 18 phase chains/53 child battles, phase HP/time/rewards, trim level and chain, shadow completion/rewards/client unlock/recovery/retry, duplicate bootstrap/results, and restart.");

@@ -22,6 +22,11 @@ public sealed class GameLoadReq
 public sealed class StageData
 {
     public double? ShipInitHp { get; set; }
+    public int DiveStageID { get; set; }
+    public int DiveLevel { get; set; }
+    public int DiveLevelAdd { get; set; }
+    public bool DiveIsBoss { get; set; }
+    public List<PlayerDeckData> DiveAssistDecks { get; set; } = [];
     public int StageId { get; set; }
     public int DungeonID { get; set; }
     public long RaidUID { get; set; }
@@ -143,6 +148,10 @@ public sealed class DynamicGameState
     public string LocalPvpStartPayloadBase64 { get; set; } = "";
     public int LocalPvpGameType { get; set; }
     public double? ShipInitHp { get; set; }
+    public int DiveStageID { get; set; }
+    public int DiveLevel { get; set; }
+    public int DiveLevelAdd { get; set; }
+    public bool DiveIsBoss { get; set; }
     public int StageID { get; set; }
     public int DungeonID { get; set; }
     public long RaidUID { get; set; }

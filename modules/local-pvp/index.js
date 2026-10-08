@@ -152,10 +152,6 @@ function createHandlers() {
       }
       console.log(`[local-pvp:start] request=${id} target=${req.targetFriendCode} deck=${req.selectDeckIndex} gameType=${req.gameType} simulation=${req.simulationGame ? 1 : 0}`);
       const simulationGame = id === 2617 && req.simulationGame;
-      if (!simulationGame && miscCount(getMiscItem(user, 13)) < 1n) {
-        logStartFailure(id, req, "ticket-unavailable");
-        sendStartError(ctx, socket, packet, id, 20335); return true;
-      }
       const targets = buildTargets(user, req.selectDeckIndex);
       const target = targets.find((item) => item.friendCode === req.targetFriendCode);
       if (!target) {
@@ -188,10 +184,6 @@ function createHandlers() {
         return true;
       }
       replay.localPvpMatch = { target, playerDeck, deckIndex: req.selectDeckIndex, simulationGame, gameType: replay.dynamicGame.localPvpGameType, settled: false, pendingMatch: id === 2617, gameDataPayload: body.subarray(error.offset, body.length - 1).toString("base64"), startPayload };
-      if (!simulationGame) {
-        replay.localPvpMatch.ticketCost = spendMiscItem(user, 13, 1n);
-        if (ctx.config && ctx.config.USE_LOCAL_USER_DB && typeof ctx.saveUserDb === "function") ctx.saveUserDb();
-      }
       if (id === 2600) {
         send(ctx, socket, packet, 2601, wi(0), "local-pvp-match");
         notifyMatchReady(ctx, socket, { force: true });
