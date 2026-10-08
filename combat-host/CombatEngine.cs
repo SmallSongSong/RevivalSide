@@ -224,13 +224,10 @@ internal sealed class CombatEngine
             EnsureBattleRecord(battleState, unit);
         }
 
-        ManagedCombatBridge.TryStart(options, data, dynamicGame, battleState, out var managedGameLoadAck, out var managedError);
-        if (dynamicGame.ManagedCombat)
+        if (!ManagedCombatBridge.TryStart(options, data, dynamicGame, battleState, out var managedGameLoadAck, out var managedError)
+            && (!string.IsNullOrWhiteSpace(options.ManagedDir) || stage.InitialUnits.Count == 0))
         {
-            // Managed combat is the preferred path when the installed
-            // CounterSide assemblies can hydrate NKCGameServerLocal from the
-            // captured 804. The lightweight state remains as a fallback and as
-            // metadata for the Node side.
+            return new HostResponse { Ok = false, Error = managedError ?? "managed battle startup failed" };
         }
 
         return new HostResponse

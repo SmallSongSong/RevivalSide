@@ -138,7 +138,10 @@ function createHandlers() {
     ...[2600, 2617].map((id) => ({ packetId: id, name: id === 2600 ? "PVP_GAME_MATCH_REQ" : "ASYNC_PVP_START_GAME_REQ", handle(ctx, socket, packet) {
       let req;
       try { req = decodeStartRequest(ctx, packet, id === 2600); }
-      catch (error) { sendStartError(ctx, socket, packet, id); return true; }
+      catch (error) {
+        logStartFailure(id, null, "request-decode", error);
+        sendStartError(ctx, socket, packet, id); return true;
+      }
       const user = socket.session.user;
       const replay = socket.session.gameReplay;
       if (isLocalPvpReplay(replay) && !replay.localPvpMatch.settled) {
@@ -147,22 +150,43 @@ function createHandlers() {
         else send(ctx, socket, packet, 2601, wi(0), "local-pvp-match-retry");
         return true;
       }
+      console.log(`[local-pvp:start] request=${id} target=${req.targetFriendCode} deck=${req.selectDeckIndex} gameType=${req.gameType} simulation=${req.simulationGame ? 1 : 0}`);
       const simulationGame = id === 2617 && req.simulationGame;
-      if (!simulationGame && miscCount(getMiscItem(user, 13)) < 1n) { sendStartError(ctx, socket, packet, id, 20335); return true; }
+      if (!simulationGame && miscCount(getMiscItem(user, 13)) < 1n) {
+        logStartFailure(id, req, "ticket-unavailable");
+        sendStartError(ctx, socket, packet, id, 20335); return true;
+      }
       const targets = buildTargets(user, req.selectDeckIndex);
       const target = targets.find((item) => item.friendCode === req.targetFriendCode);
-      if (!target) { sendStartError(ctx, socket, packet, id); return true; }
-      const playerDeck = buildPvpDeck(user, req.selectDeckIndex);
-      const stage = { stageId: 0, dungeonID: 0, mapID: 1001, gameType: req.gameType || 1, miscMode: "local-pvp", tutorial: false, playerDeck, enemyDeck: target.deck };
-      const result = ctx.buildDynamicGameLoadPayload(socket, { stageID: 0, dungeonID: 0, gameType: stage.gameType }, stage);
-      const startPayload = result && result.managed && replay.dynamicGame.localPvpStartPayloadBase64;
-      if (!startPayload) {
-        if (typeof ctx.abandonDynamicBattle === "function") ctx.abandonDynamicBattle(socket, "local-pvp-start-failed");
+      if (!target) {
+        logStartFailure(id, req, targets.length ? "target-unavailable" : "player-deck-unavailable");
         sendStartError(ctx, socket, packet, id); return true;
       }
+      const playerDeck = buildPvpDeck(user, req.selectDeckIndex);
+      const stage = { stageId: 0, dungeonID: 0, mapID: 1001, gameType: req.gameType || 1, miscMode: "local-pvp", tutorial: false, playerDeck, enemyDeck: target.deck };
+      console.log(`[local-pvp:roster] bot=${target.key} playerUnits=${playerDeck.units.map(unit => `${unit.slotIndex}:${unit.unitId}`).join(",")} enemyUnits=${target.deck.units.map(unit => unit.unitId).join(",")} ship=${playerDeck.shipUnitId} operator=${playerDeck.operatorId} equips=${playerDeck.equipItems.length}`);
+      let result;
+      try {
+        result = ctx.buildDynamicGameLoadPayload(socket, { stageID: 0, dungeonID: 0, gameType: stage.gameType }, stage);
+      } catch (error) {
+        failStart(ctx, socket, packet, id, req, "managed-start-threw", error);
+        return true;
+      }
+      const startPayload = result && result.managed && replay.dynamicGame && replay.dynamicGame.localPvpStartPayloadBase64;
+      if (!startPayload) {
+        failStart(ctx, socket, packet, id, req, result && result.managed ? "start-payload-unavailable" : "managed-start-failed", replay.lastBattleStartError);
+        return true;
+      }
       const body = result.payload;
-      const error = readSignedVarInt(body, 0);
-      if (error.value !== 0 || body[body.length - 1] !== 0) throw new Error("unexpected managed GAME_LOAD_ACK envelope");
+      let error;
+      try {
+        if (!Buffer.isBuffer(body) || body.length < 3) throw new Error("empty managed GAME_LOAD_ACK");
+        error = readSignedVarInt(body, 0);
+        if (error.value !== 0 || body[error.offset] === 0 || body[body.length - 1] !== 0) throw new Error("unexpected managed GAME_LOAD_ACK envelope");
+      } catch (cause) {
+        failStart(ctx, socket, packet, id, req, "invalid-game-load-payload", cause);
+        return true;
+      }
       replay.localPvpMatch = { target, playerDeck, deckIndex: req.selectDeckIndex, simulationGame, gameType: replay.dynamicGame.localPvpGameType, settled: false, pendingMatch: id === 2617, gameDataPayload: body.subarray(error.offset, body.length - 1).toString("base64"), startPayload };
       if (!simulationGame) {
         replay.localPvpMatch.ticketCost = spendMiscItem(user, 13, 1n);
@@ -190,6 +214,17 @@ function createHandlers() {
       send(ctx, socket, packet, 2603, wi(0), "local-pvp-cancel"); return true;
     } },
   ];
+}
+
+function logStartFailure(id, req, reason, error) {
+  const message = error && (error.stack || error.message) || (error ? String(error) : "");
+  console.log(`[local-pvp:start-failed] request=${id} target=${req ? req.targetFriendCode : "unknown"} deck=${req ? req.selectDeckIndex : "unknown"} reason=${reason}${message ? ` error=${JSON.stringify(message.slice(0, 6000))}` : ""}`);
+}
+
+function failStart(ctx, socket, packet, id, req, reason, error) {
+  logStartFailure(id, req, reason, error);
+  if (typeof ctx.abandonDynamicBattle === "function") ctx.abandonDynamicBattle(socket, "local-pvp-start-failed");
+  sendStartError(ctx, socket, packet, id);
 }
 
 function sendStartError(ctx, socket, packet, id, errorCode = 1) {

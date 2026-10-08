@@ -86,6 +86,7 @@ module.exports = {
         diveUid: diveGameLoad.diveUid,
         diveSlotSetIndex: diveGameLoad.diveSlotSetIndex,
         diveSlotIndex: diveGameLoad.diveSlotIndex,
+        diveDistance: diveGameLoad.diveDistance,
         shipInitHp: diveGameLoad.shipInitHp,
         tutorial: false,
         cutsceneOnly: false,
@@ -217,9 +218,13 @@ module.exports = {
       ctx.logCapturedClientPacketMatch(packet, 10, "game-load");
     }
     if (!activeStage || activeStage.tutorial) ctx.maybeSendTutorialCutsceneClear(socket, packet.payload);
-    if (ctx.config.DYNAMIC_BATTLE_MANAGER && activeStage && !activeStage.cutsceneOnly && ctx.sendDynamicGameLoadAck(socket, req, activeStage)) {
-      if (replay) replay.gameLoadRequestKey = requestKey;
-      return true;
+    if (ctx.config.DYNAMIC_BATTLE_MANAGER && activeStage && !activeStage.cutsceneOnly) {
+      if (ctx.sendDynamicGameLoadAck(socket, req, activeStage)) {
+        if (replay) replay.gameLoadRequestKey = requestKey;
+        return true;
+      }
+      if (diveGameLoad && typeof worldMap.cancelDiveGameLoad === "function") worldMap.cancelDiveGameLoad(user, diveGameLoad);
+      return rejectGameLoad(ctx, socket, packet, "managed-game-load-failed");
     }
     if (ctx.config.REPLAY_CAPTURED_GAME_FLOW && ctx.capturedGameFlow) {
       ctx.sendCapturedGameThroughPacketId(socket, ctx.constants.GAME_LOAD_ACK, "game-load");

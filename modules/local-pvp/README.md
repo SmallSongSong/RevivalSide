@@ -23,4 +23,6 @@
 - `807` 使用共享 managed 战斗启动链。Team B 开启自动部署、自动技能，保留游戏原生单位行为；两边使用游戏表的 `PVP_STAT_DEFAULT` 数值缩放。
 - 结算使用 `2623`，包含双方编队、实际胜负、消耗后的库存和基础奖励。结果重发不重复增加战绩或奖励。放弃对战按失败结算。PvP 不进入剧情或深潜奖励路径。
 
-上述枚举、`PvpState` 的 13 个字段顺序、匹配场景和自动部署入口已核对上游 Android APK 内的 `Assembly-CSharp.dll`。自动检查通过 `node tools/check-local-pvp.js` 和 `node tools/check-local-pvp-flow.js` 运行。C# 源码可编译；macOS 本机加载上游 managed 依赖时遇到 `BehaviorDesigner.Runtime` 的 `FileLoadException (0x8007000C)`，无法在本机执行真实游戏战斗。Android 设备上的敌队部署、舰船技能、战斗动画和结果 UI 需要实测。联网实时玩家匹配和 League Draft 未实现。
+上述枚举、`PvpState` 的 13 个字段顺序、匹配场景和自动部署入口已核对上游 Android APK 内的 `Assembly-CSharp.dll`。自动检查通过 `node tools/check-local-pvp.js` 和 `node tools/check-local-pvp-flow.js` 运行。启动日志记录目标、编队索引和单位类型；启动异常、缺失或无效的 managed 数据会返回失败，不扣票、不保留不可用战斗。
+
+修复后的 C# 服务已在 Android 独立临时目录使用真实游戏程序集和数据表验证。以去身份的 8 单位、27 件装备及操作员编队为输入，三种机器人均成功生成完整 `804` 与 `2618`；`807` 后输出 `808/809/822`，敌队原生单位和召唤物实际部署，三场均推进至 `NGS_FINISH`。另验证了在 `NGS_PLAY` 中主动部署玩家单位并收到成功的 `817`，双方战斗后的 `2623` 结算包通过真实客户端程序集完整反序列化和重序列化，胜负分别发放 75/50 点基础奖励。该验证没有启动游戏 UI、安装 APK 或修改应用存档。客户端触屏操作、动画和结果 UI 仍需安装新版后实测。联网实时玩家匹配和 League Draft 未实现。

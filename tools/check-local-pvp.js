@@ -45,6 +45,12 @@ assert.deepEqual(targets[1].deck.units.map(unit => unit.unitId), [1190, 1012, 11
 assert.equal(pvp.pvpConstants().AsyncPvpWinPoint, 75);
 assert.equal(pvp.pvpConstants().AsyncPvpLosePoint, 50);
 
+for (const friendCode of [900000001n, 900000002n, 900000003n]) {
+  const payload = Buffer.concat([codec.writeSignedVarLong(friendCode), codec.writeByte(0), codec.writeSignedVarInt(20), codec.writeBool(false)]);
+  assert.equal(payload.length, 8, "strategy bot request follows the eight-byte contract seen on device");
+  assert.deepEqual(pvp.decodeStartRequest({}, { payload }), { targetFriendCode: String(friendCode), selectDeckIndex: 0, gameType: 20, simulationGame: false });
+}
+
 const handlers = new Map(pvp.createHandlers().map(handler => [handler.packetId, handler]));
 const socket = { session: { user, gameReplay: { lastSceneId: 3 } } };
 const sent = [];
@@ -113,4 +119,34 @@ assert.equal(inventory.getMiscItem(user, 6).countFree, "0");
 assert.equal(user.pvp.local.losses, 1);
 assert.equal(user.pvp.local.history.length, 2);
 assert.equal(user.pvp.local.score, 1000);
+const logs = [];
+const originalLog = console.log;
+const originalBuilder = ctx.buildDynamicGameLoadPayload;
+console.log = message => logs.push(String(message));
+try {
+  for (const failure of ["thrown", "invalid-envelope", "null-game-data", "managed-failure"]) {
+    const ticketsBefore = inventory.getMiscItem(user, 13).countFree;
+    ctx.buildDynamicGameLoadPayload = (...args) => {
+      const result = originalBuilder(...args);
+      if (failure === "thrown") throw new Error("Ship module enum assignment failed");
+      if (failure === "invalid-envelope") result.payload = Buffer.from([0]);
+      if (failure === "null-game-data") result.payload = Buffer.from([0, 0, 0]);
+      if (failure === "managed-failure") {
+        result.managed = false;
+        socket.session.gameReplay.lastBattleStartError = "native managed failure retained";
+      }
+      return result;
+    };
+    handlers.get(2617).handle(ctx, socket, packet(false));
+    assert.equal(codec.readSignedVarInt(sent.at(-1).payload).value, 1);
+    assert.equal(inventory.getMiscItem(user, 13).countFree, ticketsBefore, `${failure} does not consume tickets`);
+    assert.equal(socket.session.gameReplay.dynamicGame, null, `${failure} clears an unusable battle`);
+  }
+} finally {
+  console.log = originalLog;
+  ctx.buildDynamicGameLoadPayload = originalBuilder;
+}
+assert(logs.some(line => line.includes("reason=managed-start-threw") && line.includes("Ship module enum assignment failed")));
+assert(logs.some(line => line.includes("reason=invalid-game-load-payload")));
+assert(logs.some(line => line.includes("reason=managed-start-failed") && line.includes("native managed failure retained")));
 console.log("[local-pvp] PASS mirror identity/equipment, wiki presets, PvP decks, match scene, retries, ticket costs, rewards, cancellation and failed startup");

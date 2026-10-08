@@ -77,6 +77,7 @@ function createCombatHandler(options = {}) {
   });
 
   function startBattle(initialData) {
+    if (initialData && initialData.replay) initialData.replay.lastBattleStartError = null;
     const forceJsFallback = shouldUseJsBattleFallback(initialData);
     if (!forceJsFallback && csharpHost.enabled && initialData && initialData.replay && initialData.req) {
       const gameUID =
@@ -88,7 +89,7 @@ function createCombatHandler(options = {}) {
         gameUID: String(gameUID),
         gameLoadAckPayloadBase64: initialData.gameLoadAckPayloadBase64 || "",
       });
-      if (response.ok && response.dynamicGame && response.battleState && response.dynamicGame.managedCombat && response.payload) {
+      if (response.ok && response.dynamicGame && response.battleState && response.dynamicGame.managedCombat && Buffer.isBuffer(response.payload) && response.payload.length > 0) {
         initialData.replay.dynamicGame = response.dynamicGame;
         initialData.replay.battleState = response.battleState;
         initialData.replay.dynamicGame.gameUID = gameUID;
@@ -103,7 +104,13 @@ function createCombatHandler(options = {}) {
         );
         return response.dynamicGame;
       }
-      warnCsharpFallback(response.error || "managed local server did not return GAME_LOAD_ACK");
+      const error = response.error || "managed local server did not return GAME_LOAD_ACK";
+      initialData.replay.lastBattleStartError = String(error);
+      initialData.replay.dynamicGame = null;
+      initialData.replay.battleState = null;
+      initialData.replay.managedGameLoadAckPayload = null;
+      console.log(`[combat-host] battle startup rejected: ${summarizeHostError(error)}`);
+      return null;
     }
     return stateManager.startBattle(initialData);
   }
@@ -114,6 +121,9 @@ function createCombatHandler(options = {}) {
 
   function handleDeploy(request) {
     const replay = request && request.replay;
+    if (csharpHost.enabled && (!replay || !replay.dynamicGame || !replay.battleState || !replay.dynamicGame.managedCombat)) {
+      return { handled: false, error: replay && replay.lastBattleStartError || "no active managed battle" };
+    }
     if (csharpHost.enabled && replay && replay.battleState && replay.dynamicGame && replay.dynamicGame.managedCombat && request.req) {
       const response = csharpHost.request("handleDeploy", {
         dynamicGame: replay.dynamicGame,

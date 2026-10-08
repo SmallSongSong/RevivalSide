@@ -3245,6 +3245,7 @@ function buildDynamicGameLoadPayload(socket, req, stage) {
   replay.stageClearLoot = null;
   replay.lastDynamicGameEndResult = null;
   replay.managedGameLoadAckPayload = null;
+  replay.lastBattleStartError = null;
   const gameLoadAckTemplate = getCapturedServerPayloadTemplate(GAME_LOAD_ACK);
   const nativeTutorialLoad =
     activeStage.tutorial || isTutorialStageId(activeStage.stageId || req.stageID) || isTutorialDungeonId(activeStage.dungeonID || req.dungeonID);
@@ -3273,7 +3274,7 @@ function buildDynamicGameLoadPayload(socket, req, stage) {
     gameLoadAckPayloadBase64: seedGameLoadTemplate && gameLoadAckTemplate ? gameLoadAckTemplate.toString("base64") : "",
   });
   if (!dynamicGame || !replay.dynamicGame) {
-    console.log("[dynamic-game-load] battle state creation failed; no GAME_LOAD_ACK sent");
+    console.log(`[dynamic-game-load] battle state creation failed: ${replay.lastBattleStartError || "no combat state"}`);
     return null;
   }
   if (replay.dynamicGame) {
@@ -3285,7 +3286,7 @@ function buildDynamicGameLoadPayload(socket, req, stage) {
     if (gameType) replay.dynamicGame.gameType = gameType;
     if (activeStage.playerDeck) replay.dynamicGame.playerDeck = activeStage.playerDeck;
     if (activeStage.enemyDeck) replay.dynamicGame.enemyDeck = activeStage.enemyDeck;
-    for (const key of ["diveUid", "diveSlotSetIndex", "diveSlotIndex", "diveDeckIndex", "shipInitHp", "phaseIndex", "phaseDungeonIds", "trimStageList", "shadowBattleOrder", "palaceID", "exploreRunId", "exploreBattleToken", "exploreStageId", "exploreZoneId", "exploreStep", "exploreSlotIndex", "exploreID"]) {
+    for (const key of ["diveUid", "diveSlotSetIndex", "diveSlotIndex", "diveDistance", "diveDeckIndex", "shipInitHp", "phaseIndex", "phaseDungeonIds", "trimStageList", "shadowBattleOrder", "palaceID", "exploreRunId", "exploreBattleToken", "exploreStageId", "exploreZoneId", "exploreStep", "exploreSlotIndex", "exploreID"]) {
       if (activeStage[key] != null) replay.dynamicGame[key] = activeStage[key];
     }
     if (activeStage.worldmapEventID) replay.dynamicGame.worldmapEventID = Number(activeStage.worldmapEventID || 0);
@@ -3303,15 +3304,14 @@ function buildDynamicGameLoadPayload(socket, req, stage) {
     Number(replay.dynamicGame.stageID || 0) === 11211 &&
     Number(replay.dynamicGame.dungeonID || 0) === 1004;
   const capturedTutorialLoadPayload = capturedTutorialBootstrap ? gameLoadAckTemplate : null;
-  let payload =
-    replay.managedGameLoadAckPayload ||
-    capturedTutorialLoadPayload ||
-    buildGameLoadAck({
-      ...replay.dynamicGame,
-      // Phase 1 preserves the captured 804 layout exactly; later stages patch
-      // dungeon/map so the client routes into the correct script.
-      patchStageFields: !replay.dynamicGame.tutorial || Number(replay.dynamicGame.stageID) !== 11211,
-    });
+  let payload = replay.managedGameLoadAckPayload || capturedTutorialLoadPayload;
+  if (!Buffer.isBuffer(payload) || payload.length === 0) {
+    replay.lastBattleStartError = replay.lastBattleStartError || "managed GAME_LOAD_ACK unavailable";
+    replay.dynamicGame = null;
+    replay.battleState = null;
+    console.log(`[dynamic-game-load] refused empty fallback battle: ${replay.lastBattleStartError}`);
+    return null;
+  }
   if (replay.dynamicGame && Array.isArray(replay.dynamicGame.battleConditionIds)) {
     payload = patchGameLoadAckBattleConditionIds(payload, replay.dynamicGame.battleConditionIds);
     if (replay.managedGameLoadAckPayload) replay.managedGameLoadAckPayload = payload;
@@ -3351,7 +3351,7 @@ function sendDynamicGameLoadAck(socket, req, stage) {
 
 function handleDynamicBattleRespawn(socket, req) {
   const replay = socket.session && socket.session.gameReplay;
-  if (!replay || !DYNAMIC_BATTLE_MANAGER || !req) return false;
+  if (!replay || !replay.dynamicGame || !replay.battleState || !DYNAMIC_BATTLE_MANAGER || !req) return false;
   const result = combatHandler.handleDeploy({ replay, req });
   if (!result || !result.handled) return false;
   if (result.mode === "managed-local-server") {

@@ -6261,7 +6261,15 @@ internal static class ManagedCombatBridge
         {
             var field = FindField(target.GetType(), fieldName)
                 ?? throw new MissingFieldException(target.GetType().FullName, fieldName);
-            field.SetValue(target, ConvertForField(value, field.FieldType));
+            try
+            {
+                field.SetValue(target, ConvertForField(value, field.FieldType));
+            }
+            catch (Exception ex) when (ex is ArgumentException or FormatException or InvalidCastException or OverflowException)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot assign {value?.GetType().FullName ?? "null"} to {target.GetType().FullName}.{fieldName} ({field.FieldType.FullName})", ex);
+            }
         }
 
         private static FieldInfo? FindField(Type type, string fieldName)
@@ -6305,15 +6313,16 @@ internal static class ManagedCombatBridge
             var targetType = Nullable.GetUnderlyingType(fieldType) ?? fieldType;
             if (targetType.IsEnum)
             {
-                return value.GetType().IsEnum ? value : Enum.ToObject(targetType, value);
+                if (targetType.IsInstanceOfType(value)) return value;
+                if (value is string name) return Enum.Parse(targetType, name);
+                var underlyingValue = Convert.ChangeType(value, Enum.GetUnderlyingType(targetType), CultureInfo.InvariantCulture);
+                return Enum.ToObject(targetType, underlyingValue!);
             }
-            if (targetType == typeof(float)) return Convert.ToSingle(value, CultureInfo.InvariantCulture);
-            if (targetType == typeof(double)) return Convert.ToDouble(value, CultureInfo.InvariantCulture);
-            if (targetType == typeof(sbyte)) return Convert.ToSByte(value, CultureInfo.InvariantCulture);
-            if (targetType == typeof(short)) return Convert.ToInt16(value, CultureInfo.InvariantCulture);
-            if (targetType == typeof(int)) return Convert.ToInt32(value, CultureInfo.InvariantCulture);
-            if (targetType == typeof(long)) return Convert.ToInt64(value, CultureInfo.InvariantCulture);
-            if (targetType == typeof(bool)) return Convert.ToBoolean(value, CultureInfo.InvariantCulture);
+            if (Type.GetTypeCode(targetType) is TypeCode.Byte or TypeCode.SByte
+                or TypeCode.Int16 or TypeCode.UInt16 or TypeCode.Int32 or TypeCode.UInt32
+                or TypeCode.Int64 or TypeCode.UInt64 or TypeCode.Single or TypeCode.Double
+                or TypeCode.Decimal or TypeCode.Boolean or TypeCode.Char)
+                return Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
             return value;
         }
 
