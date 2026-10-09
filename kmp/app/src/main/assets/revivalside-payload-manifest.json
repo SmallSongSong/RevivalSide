@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "payloadId": "revivalside-0.4.2a-android",
-  "sourcePayloadId": "revivalside-0.4.2a",
-  "releaseTag": "v0.4.2a",
+  "payloadId": "revivalside-0.4.3a-android",
+  "sourcePayloadId": "revivalside-0.4.3a",
+  "releaseTag": "v0.4.3a",
   "archiveName": "revivalside-payload.zip",
-  "archiveSize": 22293524,
-  "archiveSha256": "d89ddf9771dd849c1b9392f380e59e21fb88db791c9095282ba6c0f485c1ba5d"
+  "archiveSize": 22307173,
+  "archiveSha256": "96f9bcc2fa24a772987490efd9a06e7d9cd4cd48fcad4bf2bb4f045996e239d6"
 }
