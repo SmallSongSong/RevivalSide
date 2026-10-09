@@ -6,11 +6,12 @@ const {
   buildEquipItemData, buildOperatorData, buildShipCmdModuleData, buildItemMiscData,
 } = require("../packet-codec");
 const { buildPlayerDeckForGameLoad } = require("../unit");
-const { getUnitTemplet, getPlayableUnitIds, loadGameData, getUnitSkillMaxLevel } = require("../game-data");
+const { getUnitTemplet, getPlayableUnitIds, loadGameData, getUnitSkillMaxLevel, getEquipTemplet, isUsableEquipTemplet, getEquipRandomStatRecords, getEquipSetOptionIds, getEquipSetOption, getEquipPotentialOptionRecords, getMaxEquipEnchantLevel, getShipMaxLevel, getMaxLimitBreakRank, getOperatorMaxLevel } = require("../game-data");
 const { getMiscItem, grantMiscItem, spendMiscItem } = require("../inventory");
 const stamina = require("../stamina");
-const { readGameplayTable } = require("../gameplay-jsons");
+const { readGameplayTable, readGameplayTableRecords } = require("../gameplay-jsons");
 const path = require("node:path");
+const { createEquipData } = require("../equipment");
 const presets = require("./bots.json");
 const MIRROR_CODE = "900000001";
 
@@ -19,55 +20,149 @@ function ensureState(user) {
   user.pvp.local = user.pvp.local && typeof user.pvp.local === "object" ? user.pvp.local : {};
   const state = user.pvp.local;
   state.history = Array.isArray(state.history) ? state.history : [];
-  state.wins = Math.max(0, Number(state.wins || 0));
-  state.losses = Math.max(0, Number(state.losses || 0));
+  for (const key of ["wins", "losses", "draws", "winStreak", "maxWinStreak"]) state[key] = safeCount(state[key]);
+  state.score = safeCount(state.score, 1000);
+  state.maxScore = Math.max(state.score, safeCount(state.maxScore, 1000));
   return state;
 }
 
-function cloneDeck(playerDeck, friendCode = MIRROR_CODE, name = "BOT · Mirror") {
+function cloneDeck(playerDeck, friendCode = MIRROR_CODE, name = "BOT · Mirror 120") {
   const deck = JSON.parse(JSON.stringify(playerDeck));
-  const unitIds = new Map();
-  const equipIds = new Map();
   const base = BigInt(friendCode) * 100n;
-  const remap = (value, map, offset) => {
-    const key = String(value || "0");
-    if (key === "0" || key === "-1") return key;
-    if (!map.has(key)) map.set(key, String(base + BigInt(offset + map.size)));
-    return map.get(key);
-  };
+  const originalLeader = String(deck.leaderUnitUid || "0");
   deck.userUid = String(friendCode);
   deck.nickname = name;
-  deck.units.forEach((unit) => { unit.unitUid = remap(unit.unitUid, unitIds, 10); });
-  deck.leaderUnitUid = remap(deck.leaderUnitUid, unitIds, 10);
-  deck.shipUid = remap(deck.shipUid, unitIds, 10);
-  deck.operatorUid = remap(deck.operatorUid, unitIds, 10);
-  if (deck.operatorData) deck.operatorData.uid = deck.operatorUid;
-  for (const equip of deck.equipItems || []) {
-    equip.equipUid = remap(equip.equipUid, equipIds, 50);
-    equip.ownerUnitUid = remap(equip.ownerUnitUid, unitIds, 10);
-  }
-  for (const unit of deck.units) unit.equipItemUids = (unit.equipItemUids || []).map((uid) => remap(uid, equipIds, 50));
+  deck.units = deck.units.map((unit, index) => {
+    const originalUid = String(unit.unitUid);
+    const result = maxBattleUnit(unit.unitId, String(base + 10n + BigInt(index)), unit.slotIndex);
+    result.skinId = Number(unit.skinId || 0);
+    if (originalUid === originalLeader) deck.leaderUnitUid = result.unitUid;
+    return result;
+  });
+  if (!deck.units.some(unit => unit.unitUid === deck.leaderUnitUid)) deck.leaderUnitUid = deck.units[0]?.unitUid || "0";
+  deck.shipUid = String(base + 1n);
+  deck.shipLimitBreakLevel = 3;
+  deck.shipLevel = getShipMaxLevel(deck.shipUnitId, { limitBreakLevel: 3 });
+  deck.shipSkillLevels = [1, 1, 1, 0, 0];
+  const operator = buildPresetOperator(deck.operatorId || 31901, String(base + 2n), deck.operatorData?.subSkill?.id || 1013);
+  deck.operatorUid = operator.uid; deck.operatorId = operator.id; deck.operatorLevel = operator.level; deck.operatorData = operator;
+  deck.equipItems = equipMaxBattleUnits(deck.units, base);
   return deck;
+}
+
+function maxBattleUnit(unitId, uid, slotIndex) {
+  const record = getUnitTemplet(unitId);
+  if (!record || !["NUST_COUNTER", "NUST_MECHANIC", "NUST_SOLDIER"].includes(record.m_NKM_UNIT_STYLE_TYPE)) throw new Error(`unavailable mirror unit ${unitId}`);
+  return { slotIndex, unitUid: uid, unitId, level: 120, skinId: 0, tacticLevel: 6,
+    tacticGroup: Number(record.m_TacticGroup || 0), limitBreakLevel: getMaxLimitBreakRank({ maxLevel: 120 }),
+    skillLevels: presetSkillLevels(unitId), reactorLevel: presetReactorLevel(unitId), statExp: [0, 0, 0, 0, 0, 0], equipItemUids: [] };
+}
+
+function equipMaxBattleUnits(units, base) {
+  const equips = [];
+  for (const [index, unit] of units.entries()) {
+    for (const [slot, template] of presetEquipTemplates(unit.unitId).entries()) {
+      const equip = buildPresetEquip(template, String(base + 50n + BigInt(index * 4 + slot)));
+      equip.ownerUnitUid = unit.unitUid;
+      unit.equipItemUids.push(equip.equipUid);
+      equips.push(equip);
+    }
+  }
+  return equips;
 }
 
 function buildPresetDeck(preset, playerDeck) {
   const playable = new Set(getPlayableUnitIds());
-  if (preset.unitIds.some((id) => !playable.has(id))) throw new Error(`bot ${preset.key} references unavailable units`);
+  if (preset.unitIds.length !== 8 || new Set(preset.unitIds).size !== 8 || preset.unitIds.some(id => !playable.has(id) || getUnitTemplet(id).m_NKM_UNIT_GRADE !== "NUG_SSR"))
+    throw new Error(`bot ${preset.key} references unavailable SSR units`);
+  const ship = getUnitTemplet(preset.shipUnitId);
+  if (!ship || ship.m_NKM_UNIT_TYPE !== "NUT_SHIP" || (ship.listContentsTagAllow?.length && !ship.listContentsTagAllow.includes("KOR")))
+    throw new Error(`bot ${preset.key} ship requires unavailable native content tags`);
   const base = BigInt(preset.friendCode) * 100n;
-  const levels = playerDeck.units.map((unit) => Number(unit.level || 1));
-  const level = Math.max(1, Math.min(110, Math.round(levels.reduce((sum, value) => sum + value, 0) / levels.length)));
+  const operator = buildPresetOperator(preset.operatorId, String(base + 2n));
+  const units = preset.unitIds.map((id, index) => maxBattleUnit(id, String(base + 10n + BigInt(index)), index));
+  const equipItems = equipMaxBattleUnits(units, base);
   return {
     userUid: preset.friendCode, nickname: preset.name, userLevel: playerDeck.userLevel,
-    deckType: playerDeck.deckType, deckIndex: 0, leaderIndex: 0, leaderUnitUid: String(base + 10n),
+    deckType: 2, deckIndex: 0, leaderIndex: 0, leaderUnitUid: units[0].unitUid,
     shipUid: String(base + 1n), shipUnitId: preset.shipUnitId,
-    shipLevel: Math.max(1, Math.min(110, playerDeck.shipLevel)), shipSkinId: 0,
-    operatorUid: "0", operatorId: 0, operatorLevel: 1, equipItems: [],
-    units: preset.unitIds.map((unitId, slotIndex) => ({
-      slotIndex, unitUid: String(base + 10n + BigInt(slotIndex)), unitId, level,
-      skinId: 0, tacticLevel: 0, tacticGroup: Number((getUnitTemplet(unitId) || {}).m_TacticGroup || 0),
-      limitBreakLevel: 0, skillLevels: presetSkillLevels(unitId), equipItemUids: ["0", "0", "0", "0"],
-    })),
+    shipLevel: getShipMaxLevel(preset.shipUnitId, { limitBreakLevel: 3 }), shipLimitBreakLevel: 3,
+    shipSkillLevels: [1, 1, 1, 0, 0], shipSkinId: 0, shipCommandModules: [],
+    operatorUid: operator.uid, operatorId: operator.id, operatorLevel: operator.level, operatorData: operator,
+    equipItems, units,
   };
+}
+
+const CDR_SET = 241900;
+const HASTE = "NST_SKILL_COOL_TIME_REDUCE_RATE";
+const ROOT_DIR = path.resolve(__dirname, "../..");
+let presetTables;
+function getPresetTables() {
+  if (!presetTables) presetTables = {
+    operatorSkills: readGameplayTableRecords("ab_script_unit_data", "LUA_OPERATOR_SKILL_TEMPLET.json", { rootDir: ROOT_DIR }),
+    reactors: readGameplayTableRecords("ab_script", "LUA_REACTOR_TEMPLET.json", { rootDir: ROOT_DIR }),
+  };
+  return presetTables;
+}
+function buildPresetOperator(id, uid, subSkillId = 1013) {
+  const unit = getUnitTemplet(id);
+  const main = getPresetTables().operatorSkills.find(record => record.m_OperSkillStrID === unit?.m_SkillStrID1);
+  const sub = getPresetTables().operatorSkills.find(record => record.m_OperSkillID === Number(subSkillId) && record.m_OperSkillType === "m_Passive");
+  if (!main || !sub || unit.m_NKM_UNIT_TYPE !== "NUT_OPERATOR") throw new Error(`missing bot operator ${id}`);
+  return { uid, id, level: getOperatorMaxLevel(unit.m_NKM_UNIT_GRADE), exp: 0, locked: true, fromContract: true,
+    mainSkill: { id: main.m_OperSkillID, level: main.m_MaxSkillLevel, exp: 0 },
+    subSkill: { id: sub.m_OperSkillID, level: sub.m_MaxSkillLevel, exp: 0 } };
+}
+function presetReactorLevel(unitId) {
+  const reactor = getPresetTables().reactors.find(record => Number(record.ReactorID) === unitId);
+  return reactor ? Object.keys(reactor).filter(key => /^Level\d+$/.test(key) && Number(reactor[key]) > 0).length : 0;
+}
+function statRecords(template, slot) { return getEquipRandomStatRecords(slot === 1 ? template.m_StatGroupID : template.m_StatGroupID_2); }
+function bestStat(template, slot, preferred) {
+  const records = statRecords(template, slot);
+  for (const type of preferred) { const record = records.find(record => record.m_StatType === type); if (record) return record; }
+  return records[0] || null;
+}
+function presetEquipTemplates(unitId) {
+  const unit = getUnitTemplet(unitId);
+  const offset = { NUST_COUNTER: 0, NUST_MECHANIC: 1000, NUST_SOLDIER: 2000 }[unit.m_NKM_UNIT_STYLE_TYPE];
+  if (offset == null) throw new Error(`unsupported bot unit style ${unitId}`);
+  const tank = ["NURT_DEFENDER", "NURT_STRIKER"].includes(unit.m_NKM_UNIT_ROLE_TYPE);
+  const support = unit.m_NKM_UNIT_ROLE_TYPE === "NURT_SUPPORTER";
+  const ids = tank ? [2461141 + offset, 1561241 + offset, 1561342 + offset, 1561342 + offset]
+    : support ? [1661101 + offset, 1561241 + offset, 1561342 + offset, 1561342 + offset]
+      : [1561141 + offset, 1561241 + offset, 1561341 + offset, 1561341 + offset];
+  const positions = ["IEP_WEAPON", "IEP_DEFENCE", "IEP_ACC", "IEP_ACC"];
+  let hasExclusive = false;
+  return ids.map((id, slot) => {
+    let template = getEquipTemplet(id);
+    if (!isUsableEquipTemplet(template) && support && slot === 0) template = getEquipTemplet(1561141 + offset);
+    if (!tank && !hasExclusive) {
+      const exclusive = Array.from(loadGameData().equipById.values()).filter(record =>
+        isUsableEquipTemplet(record) && record.m_NKM_ITEM_TIER === 7 && record.m_ItemEquipPosition === positions[slot]
+        && record.m_EquipUnitStyleType === unit.m_NKM_UNIT_STYLE_TYPE && (record.m_lstPrivateUnitID || []).includes(unit.m_BaseUnitID || unitId)
+        && getEquipSetOptionIds(record).includes(CDR_SET) && statRecords(record, 2).some(stat => stat.m_StatType === HASTE))
+        .sort((a, b) => Number(a.m_ItemEquipID) - Number(b.m_ItemEquipID))[0];
+      if (exclusive) { template = exclusive; hasExclusive = true; }
+    }
+    if (!isUsableEquipTemplet(template) || template.m_ItemEquipPosition !== positions[slot] || template.m_EquipUnitStyleType !== unit.m_NKM_UNIT_STYLE_TYPE || !getEquipSetOptionIds(template).includes(CDR_SET))
+      throw new Error(`invalid bot gear ${id} for unit ${unitId}`);
+    return template;
+  });
+}
+function buildPresetEquip(template, uid) {
+  const defensive = template.m_bRelic || /1661|1662|1663|1561342|1562342|1563342/.test(String(template.m_ItemEquipID));
+  const preferences = defensive ? ["NST_MOVE_TYPE_LAND_DAMAGE_REDUCE_RATE", "NST_DAMAGE_REDUCE_RATE", "NST_LONG_RANGE_DAMAGE_REDUCE_RATE", "NST_UNIT_TYPE_COUNTER_DAMAGE_REDUCE_RATE"]
+    : ["NST_MOVE_TYPE_LAND_DAMAGE_RATE", "NST_MOVE_TYPE_LAND_DAMAGE_REDUCE_RATE"];
+  const first = bestStat(template, 1, preferences);
+  const second = bestStat(template, 2, [HASTE, "NST_MOVE_TYPE_LAND_DAMAGE_REDUCE_RATE"]);
+  const customSubstats = [first, second].map((record, index) => record && ({ slot: index + 1, type: record.m_StatType, valueKind: "max" })).filter(Boolean);
+  const potential = template.m_bRelic ? getEquipPotentialOptionRecords(template.m_PotentialOptionGroupID).find(record => record.Socket1_StatType === HASTE) : null;
+  if (template.m_bRelic && !potential) throw new Error(`missing bot gear haste potential ${template.m_ItemEquipID}`);
+  const potentialOptions = potential ? [{ optionKey: potential.OptionKey, statType: HASTE, precisionChangeCount: 0,
+    sockets: [1, 2, 3].map(slot => ({ statValue: Number(potential[`Socket${slot}_MaxStat`]), precision: 100 })) }] : [];
+  return createEquipData(template.m_ItemEquipID, uid, { enchantLevel: Math.min(template.m_MaxEnchantLevel, getMaxEquipEnchantLevel(template.m_NKM_ITEM_TIER)),
+    precision: 100, precision2: 100, setOptionId: CDR_SET, customSubstats, potentialOptions, regDate: "0", locked: true });
 }
 
 function buildTargets(user, deckIndex = 0) {
@@ -120,12 +215,14 @@ function decodeStartRequest(ctx, packet, ranked = false) {
   if (!ranked) { const item = readSignedVarLong(payload, offset); offset = item.offset; targetFriendCode = String(item.value); }
   const deck = readByte(payload, offset); offset = deck.offset;
   const type = readSignedVarInt(payload, offset); offset = type.offset;
-  const simulationGame = offset < payload.length ? readBool(payload, offset).value : false;
-  return { targetFriendCode, selectDeckIndex: deck.value, gameType: type.value, simulationGame };
+  const flag = readBool(payload, offset); offset = flag.offset;
+  if (offset !== payload.length) throw new Error("unexpected trailing local PvP request bytes");
+  if (!(ranked ? [6] : [11, 20, 21, 22]).includes(type.value)) throw new Error(`unsupported local PvP game type ${type.value}`);
+  return { targetFriendCode, selectDeckIndex: deck.value, gameType: type.value, simulationGame: !ranked && flag.value, ...(ranked ? { usingBot: flag.value } : {}) };
 }
 
 function send(ctx, socket, packet, id, payload, label) {
-  ctx.sendGameResponse(socket, packet, id, payload, label);
+  return ctx.sendGameResponse(socket, packet, id, payload, label);
 }
 
 function createHandlers() {
@@ -146,8 +243,18 @@ function createHandlers() {
       const replay = socket.session.gameReplay;
       if (isLocalPvpReplay(replay) && !replay.localPvpMatch.settled) {
         const existing = replay.localPvpMatch;
-        if (id === 2617 && existing.startPayload) send(ctx, socket, packet, 2618, Buffer.from(existing.startPayload, "base64"), "local-pvp-start-retry");
-        else send(ctx, socket, packet, 2601, wi(0), "local-pvp-match-retry");
+        const sameRequest = existing.target.friendCode === req.targetFriendCode && existing.deckIndex === req.selectDeckIndex
+          && Boolean(existing.simulationGame) === Boolean(id === 2617 && req.simulationGame)
+          && (existing.requestPacketId == null || existing.requestPacketId === id)
+          && (existing.requestGameType == null || existing.requestGameType === req.gameType);
+        if (!sameRequest) {
+          logStartFailure(id, req, "active-match-conflict");
+          sendStartError(ctx, socket, packet, id); return true;
+        }
+        if (id === 2617 && existing.startPayload) {
+          if (!existing.startResponseSent) sendPreparedStart(ctx, socket, packet, existing, "local-pvp-start-retry");
+          else console.log(`[local-pvp:duplicate-start] target=${req.targetFriendCode} deck=${req.selectDeckIndex} gameUID=${replay.dynamicGame.gameUID} ACK already sent`);
+        } else send(ctx, socket, packet, 2601, wi(0), "local-pvp-match-retry");
         return true;
       }
       console.log(`[local-pvp:start] request=${id} target=${req.targetFriendCode} deck=${req.selectDeckIndex} gameType=${req.gameType} simulation=${req.simulationGame ? 1 : 0}`);
@@ -183,29 +290,56 @@ function createHandlers() {
         failStart(ctx, socket, packet, id, req, "invalid-game-load-payload", cause);
         return true;
       }
-      replay.localPvpMatch = { target, playerDeck, deckIndex: req.selectDeckIndex, simulationGame, gameType: replay.dynamicGame.localPvpGameType, settled: false, pendingMatch: id === 2617, gameDataPayload: body.subarray(error.offset, body.length - 1).toString("base64"), startPayload };
+      let populatedStartPayload;
+      try {
+        populatedStartPayload = buildPopulatedStartAck(Buffer.from(startPayload, "base64"), target, targets);
+      } catch (cause) {
+        failStart(ctx, socket, packet, id, req, "invalid-async-start-payload", cause);
+        return true;
+      }
+      replay.localPvpMatch = { target, playerDeck, requestPacketId: id, requestGameType: req.gameType, deckIndex: req.selectDeckIndex, simulationGame, gameType: replay.dynamicGame.localPvpGameType, settled: false, pendingMatch: id === 2617, gameDataPayload: body.subarray(error.offset, body.length - 1).toString("base64"), startPayload: populatedStartPayload.toString("base64"), startResponseSent: false };
       if (id === 2600) {
         send(ctx, socket, packet, 2601, wi(0), "local-pvp-match");
         notifyMatchReady(ctx, socket, { force: true });
       } else {
-        send(ctx, socket, packet, 2618, Buffer.from(startPayload, "base64"), "local-pvp-start");
+        sendPreparedStart(ctx, socket, packet, replay.localPvpMatch, "local-pvp-start");
       }
       return true;
     } })),
     { packetId: 2602, name: "PVP_GAME_MATCH_CANCEL_REQ", handle(ctx, socket, packet) {
       const replay = socket.session && socket.session.gameReplay;
       if (isLocalPvpReplay(replay) && !replay.loadCompleteReceived) {
-        const match = replay.localPvpMatch;
-        if (match.ticketCost && !match.ticketRefunded) {
-          grantMiscItem(socket.session.user, 13, 1n);
-          match.ticketRefunded = true;
-          if (ctx.config && ctx.config.USE_LOCAL_USER_DB && typeof ctx.saveUserDb === "function") ctx.saveUserDb();
-        }
+        replay.localPvpMatch.canceled = true;
+        replay.localPvpMatch.pendingMatch = false;
         if (typeof ctx.abandonDynamicBattle === "function") ctx.abandonDynamicBattle(socket, "local-pvp-match-cancel");
       }
       send(ctx, socket, packet, 2603, wi(0), "local-pvp-cancel"); return true;
     } },
   ];
+}
+
+function buildPopulatedStartAck(nativePayload, target, targets) {
+  if (!Buffer.isBuffer(nativePayload) || nativePayload.length < 6) throw new Error("empty managed ASYNC_PVP_START_GAME_ACK");
+  const error = readSignedVarInt(nativePayload, 0);
+  if (error.value !== 0 || nativePayload[error.offset] !== 1 || !nativePayload.subarray(-3).equals(Buffer.from([0, 0, 0])))
+    throw new Error("unexpected managed ASYNC_PVP_START_GAME_ACK target envelope");
+  const index = targets.findIndex(item => item.friendCode === target.friendCode);
+  if (index < 0) throw new Error("selected local PvP target is absent");
+  // The managed writer owns gameData/runtimeData. Its final fields are currently
+  // refreshedTargetData=null, targetList=[], skip=false in the frozen client ABI.
+  return Buffer.concat([nativePayload.subarray(0, -3), object(targetData(target, index)),
+    writeObjectList(targets.map((item, index) => object(targetData(item, index)))), writeBool(false)]);
+}
+
+function sendPreparedStart(ctx, socket, packet, match, label) {
+  try {
+    const result = send(ctx, socket, packet, 2618, Buffer.from(match.startPayload, "base64"), label);
+    if (result !== false) match.startResponseSent = true;
+    return result !== false;
+  } catch (error) {
+    logStartFailure(2617, { targetFriendCode: match.target.friendCode, selectDeckIndex: match.deckIndex }, "start-response-send", error);
+    return false;
+  }
 }
 
 function logStartFailure(id, req, reason, error) {
@@ -225,17 +359,17 @@ function sendStartError(ctx, socket, packet, id, errorCode = 1) {
   send(ctx, socket, packet, id === 2600 ? 2601 : 2618, payload, "local-pvp-unavailable");
 }
 
-function isLocalPvpReplay(replay) { return Boolean(replay && replay.dynamicGame && replay.dynamicGame.miscMode === "local-pvp" && replay.localPvpMatch); }
+function isLocalPvpReplay(replay) { return Boolean(replay && replay.dynamicGame && replay.dynamicGame.miscMode === "local-pvp" && replay.localPvpMatch && !replay.localPvpMatch.canceled); }
 function buildPvpState(user) {
   const state = user ? ensureState(user) : {};
   // PvpState.Serialize order from the bundled Android Assembly-CSharp.dll.
-  return Buffer.concat([0, 0, state.wins || 0, state.losses || 0, 0, 0, state.score ?? 1000, state.maxScore ?? 1000, state.winStreak || 0, state.maxWinStreak || 0, 0, (state.wins || 0) + (state.losses || 0), state.wins || 0].map(wi));
+  return Buffer.concat([0, 0, state.wins || 0, state.losses || 0, 0, 0, state.score ?? 1000, state.maxScore ?? 1000, state.winStreak || 0, state.maxWinStreak || 0, 0, (state.wins || 0) + (state.losses || 0) + (state.draws || 0), state.wins || 0].map(wi));
 }
 
-function historyData(match, result, gameUid, now, user) {
+function historyData(match, result, gameUid, now, user, score = {}) {
   return Buffer.concat([
     wl(BigInt(gameUid)), wi(user.level || 1), wi(match.target.deck.userLevel), writeString(match.target.deck.nickname),
-    wi(result), wi(0), wi(0), wi(0), wi(0), wi(1000), wl(now), object(asyncDeck(match.playerDeck)), object(asyncDeck(match.target.deck)),
+    wi(result), wi(score.gainScore || 0), wi(0), wi(score.score ?? 1000), wi(0), wi(1000), wl(now), object(asyncDeck(match.playerDeck)), object(asyncDeck(match.target.deck)),
     wi(match.gameType || 0), wl(BigInt(match.target.friendCode)), wl(0n), writeString(""), wl(0n), wl(0n), writeString(""), wl(0n),
     writeIntList([]), writeIntList([]), writeBool(false), wi(0), writeIntList([]), writeIntList([]),
   ]);
@@ -248,35 +382,58 @@ function buildGameEndPayload(socket, options = {}) {
   if (match.endPayload) return Buffer.from(match.endPayload, "base64");
   const user = socket.session.user;
   const state = ensureState(user);
-  const win = options.win === true;
-  const result = win ? 0 : 1;
+  const result = options.result == null ? options.draw === true ? 2 : options.win === true ? 0 : 1 : Number(options.result);
+  if (![0, 1, 2].includes(result)) throw new Error(`invalid local PvP result ${result}`);
+  const win = result === 0;
+  const draw = result === 2;
+  const eligible = !match.simulationGame && replay.loadCompleteReceived !== false;
   const gameUid = String(replay.dynamicGame.gameUID);
   const now = options.now instanceof Date ? (BigInt(options.now.getTime()) * 10000n + 621355968000000000n | 0x4000000000000000n) : typeof options.now === "bigint" ? options.now : dateTimeBinaryNow();
-  let gainPointItem = null;
-  const costItems = match.ticketCost ? [getMiscItem(user, 13)] : [];
-  if (!match.simulationGame) {
+  if (options.gameRecordPayload != null && !Buffer.isBuffer(options.gameRecordPayload)) throw new Error("invalid local PvP gameRecord payload");
+  // Prepare roster/history serialization before committing currency or statistics.
+  const targetsPayload = targetList(user, match.deckIndex);
+  const constants = pvpConstants();
+  const next = { ...state };
+  let points = 0n;
+  let budget = null;
+  let costBudget = null;
+  if (eligible) {
     stamina.refreshTimedStamina(user, { itemIds: [6], now, initializeMissing: false });
-    const constants = pvpConstants();
-    const maximumReward = BigInt(Math.max(0, Number(win ? constants.AsyncPvpWinPoint : constants.AsyncPvpLosePoint)));
-    const available = miscCount(getMiscItem(user, 6));
-    const points = available < maximumReward ? available : maximumReward;
+    const maximumReward = BigInt(draw ? 0 : Math.max(0, Number(win ? constants.AsyncPvpWinPoint : constants.AsyncPvpLosePoint)));
+    budget = getMiscItem(user, 6);
+    const available = miscCount(budget);
+    points = available < maximumReward ? available : maximumReward;
     if (points > 0n) {
-      gainPointItem = grantMiscItem(user, 5, points, 0, { regDate: now });
-      costItems.push(spendMiscItem(user, 6, points, { regDate: now }));
+      const free = BigInt(budget.countFree || 0);
+      const freeSpend = free < points ? free : points;
+      costBudget = { ...budget, countFree: String(free - freeSpend), countPaid: String(BigInt(budget.countPaid || 0) - (points - freeSpend)), regDate: String(now) };
     }
-    if (win) state.wins++; else state.losses++;
-    state.score = Math.max(0, Number(state.score ?? 1000) + (win ? 1 : -1) * Number(constants.ScoreMinIntervalUnit || 25));
-    state.maxScore = Math.max(Number(state.maxScore ?? 1000), state.score);
-    state.winStreak = win ? Number(state.winStreak || 0) + 1 : 0;
-    state.maxWinStreak = Math.max(Number(state.maxWinStreak || 0), state.winStreak);
-    state.history.unshift({ gameUid, targetFriendCode: match.target.friendCode, targetNickName: match.target.deck.nickname, win, createdAt: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString() });
-    state.history = state.history.slice(0, 30);
+    if (draw) next.draws++; else if (win) next.wins++; else next.losses++;
+    next.score = safeCount(state.score + (draw ? 0 : win ? 1 : -1) * Number(constants.ScoreMinIntervalUnit || 25));
+    next.maxScore = Math.max(state.maxScore, next.score);
+    next.winStreak = win ? state.winStreak + 1 : 0;
+    next.maxWinStreak = Math.max(state.maxWinStreak, next.winStreak);
   }
+  const gain = points > 0n ? { itemId: 5, countFree: String(points), countPaid: "0", bonusRatio: 0, regDate: String(now) } : null;
+  const score = { score: next.score, gainScore: next.score - state.score };
   const payload = Buffer.concat([
-    wi(result), object(buildPvpState(user)), gainPointItem ? object(buildItemMiscData(gainPointItem)) : nil(), options.gameRecordPayload ? object(options.gameRecordPayload) : nil(),
-    writeObjectList(costItems.map((item) => object(buildItemMiscData(item)))), object(historyData(match, result, gameUid, now, user)), targetList(user, match.deckIndex), writeInt64LE(stamina.getChargeItemLastUpdateDate(user, 6, now)),
+    wi(result), object(buildPvpState({ pvp: { local: next } })), gain ? object(buildItemMiscData(gain)) : nil(), options.gameRecordPayload ? object(options.gameRecordPayload) : nil(),
+    writeObjectList(costBudget ? [object(buildItemMiscData(costBudget))] : []),
+    object(historyData(match, result, gameUid, now, user, score)), targetsPayload, writeInt64LE(stamina.getChargeItemLastUpdateDate(user, 6, now)),
     writeBool(true), writeBool(false), wi(0), writeFloatLE(Number(options.gameEndTime || 0)), writeBool(match.simulationGame),
   ]);
+  if (eligible) {
+    if (points > 0n) {
+      grantMiscItem(user, 5, points, 0, { regDate: now });
+      spendMiscItem(user, 6, points, { regDate: now });
+    }
+    Object.assign(state, next);
+    state.history.unshift({ gameUid, targetFriendCode: match.target.friendCode, targetNickName: match.target.deck.nickname, win, draw, result,
+      score: next.score, gainScore: score.gainScore, createdAt: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString() });
+    state.history = state.history.slice(0, 30);
+  }
+  match.progressionEligible = eligible;
+  match.settlementResult = result;
   match.settled = true;
   match.endPayload = payload.toString("base64");
   return payload;
@@ -291,9 +448,10 @@ function notifyMatchReady(ctx, socket, options = {}) {
   if (!isLocalPvpReplay(replay)) return false;
   const match = replay.localPvpMatch;
   if (match.matchNotified || match.settled || (!match.pendingMatch && !options.force)) return false;
+  const sent = ctx.sendServerGamePacket(socket, 2604, Buffer.from(match.gameDataPayload, "base64"), "local-pvp-match-complete");
+  if (sent === false) return false;
   match.matchNotified = true;
   match.pendingMatch = false;
-  ctx.sendServerGamePacket(socket, 2604, Buffer.from(match.gameDataPayload, "base64"), "local-pvp-match-complete");
   return true;
 }
 
@@ -308,6 +466,7 @@ function presetSkillLevels(unitId) {
   });
 }
 
+function safeCount(value, fallback = 0) { const number = Number(value ?? fallback); return Number.isFinite(number) ? Math.min(0x7fffffff, Math.max(0, Math.trunc(number))) : fallback; }
 function miscCount(item) { return BigInt(item.countFree || 0) + BigInt(item.countPaid || 0); }
 let cachedPvpConstants;
 function pvpConstants() {
@@ -318,4 +477,4 @@ function pvpConstants() {
   return cachedPvpConstants;
 }
 
-module.exports = { pvpConstants, buildPvpDeck, notifyMatchReady, createHandlers, ensureState, buildTargets, cloneDeck, buildPresetDeck, asyncDeck, asyncUnit, targetData, targetList, decodeStartRequest, isLocalPvpReplay, buildPvpState, buildGameEndPayload, presets };
+module.exports = { buildPopulatedStartAck, CDR_SET, presetSkillLevels, presetReactorLevel, presetEquipTemplates, buildPresetEquip, buildPresetOperator, pvpConstants, buildPvpDeck, notifyMatchReady, createHandlers, ensureState, buildTargets, cloneDeck, buildPresetDeck, asyncDeck, asyncUnit, targetData, targetList, decodeStartRequest, isLocalPvpReplay, buildPvpState, buildGameEndPayload, presets };

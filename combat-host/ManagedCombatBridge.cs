@@ -58,6 +58,7 @@ internal static class ManagedCombatBridge
         "rewardEnableUnitMissions",
         "userProfileData",
         "lastPlayInfo",
+        "privateGuildData",
         "customPickupContracts"
     ];
     private static readonly HashSet<string> OfficialContractJoinLobbyFields = new(StringComparer.Ordinal)
@@ -1099,6 +1100,8 @@ internal static class ManagedCombatBridge
             {
                 session.SetInitialRaidBossHP(req.RaidCurHP, req.RaidMaxHP);
             }
+            if (dynamicGame.GameType == 17 && dynamicGame.GuildBossMaxHp > 0)
+                session.SetInitialRaidBossHP(dynamicGame.GuildBossInitHp, dynamicGame.GuildBossMaxHp);
             
             Sessions[sessionId] = session;
             dynamicGame.ManagedSessionId = sessionId;
@@ -1163,7 +1166,7 @@ internal static class ManagedCombatBridge
                 packets.AddRange(session.DrainSetupPackets());
                 
                 // Patch raid boss HP after units have spawned
-                if (dynamicGame != null && dynamicGame.RaidUID > 0)
+                if (dynamicGame != null && (dynamicGame.RaidUID > 0 || dynamicGame.GameType == 17))
                 {
                     session.PatchRaidBossUnitHP();
                 }
@@ -2433,7 +2436,7 @@ internal static class ManagedCombatBridge
                     battleState.ShipHpDamagePercent = Math.Clamp((1.0 - playerShip.CurHp / playerShip.MaxHp) * 100.0, 0.0, 100.0);
                 }
             }
-            var tracksBoss = dynamicGame.RaidUID > 0 || IsFierceGame(dynamicGame);
+            var tracksBoss = dynamicGame.RaidUID > 0 || IsFierceGame(dynamicGame) || dynamicGame.GameType is 17 or 25;
             if (!tracksBoss) return;
             var snapshot = ReadTeamBossSnapshot(teamA: false, battleState);
             if (snapshot.MaxHp <= 0) return;
@@ -3605,9 +3608,28 @@ internal static class ManagedCombatBridge
                 .Invoke(null, [tags]);
             var nkcMainType = GetType("NKC.NKCMain");
             nkcMainType.GetMethod("NKCInit", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, null);
+            BindCombatUnitStats();
             LoadOptionalStaticTable("NKM.NKMBattleConditionManager", "LoadFromLua");
             LoadOptionalStaticTable("NKM.NKMTacticUpdateTemplet", "LoadFromLua");
             clientTablesInitialized = true;
+        }
+
+        private void BindCombatUnitStats()
+        {
+            // Combat-only NKCInit omits the full content Join pass. Range buffs
+            // still require the original unit-to-stat link established there.
+            var unitBaseType = GetType("NKM.Templet.NKMUnitTempletBase");
+            var manager = GetType("NKM.NKMUnitManager");
+            var values = unitBaseType.GetMethod("get_Values", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, null) as IEnumerable;
+            var getStat = manager.GetMethod("GetUnitStatTemplet", BindingFlags.Public | BindingFlags.Static, null, [typeof(int)], null)!;
+            var setStat = unitBaseType.GetMethod("set_StatTemplet", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!;
+            foreach (var unitBase in values ?? Array.Empty<object>())
+            {
+                if (unitBase == null || Invoke(unitBase, "get_StatTemplet") != null) continue;
+                var id = Convert.ToInt32(GetField(unitBase, "m_UnitID"), CultureInfo.InvariantCulture);
+                var stat = getStat.Invoke(null, [id]);
+                if (stat != null) setStat.Invoke(unitBase, [stat]);
+            }
         }
 
         private void LoadOptionalStaticTable(string typeName, string methodName)
@@ -4012,6 +4034,8 @@ internal static class ManagedCombatBridge
                 13 => "NGT_SHADOW_PALACE",
                 14 => "NGT_FIERCE",
                 15 => "NGT_PHASE",
+                16 => "NGT_GUILD_DUNGEON_ARENA",
+                17 => "NGT_GUILD_DUNGEON_BOSS",
                 23 => "NGT_TRIM",
                 25 => "NGT_GUILD_DUNGEON_BOSS_PRACTICE",
                 26 => "NGT_PVE_DEFENCE",

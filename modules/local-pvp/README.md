@@ -1,28 +1,46 @@
 # 本地竞技场机器人
 
-策略竞技场的对手列表提供 3 个机器人。默认镜像使用玩家选择的 PvP 编队（`NDT_PVP = 2`），复制单位等级、技能、强化、反应堆、装备属性、舰船等级与限界、舰船指令模块、操作员主副技能。机器人拥有独立的账号、单位和装备 UID，不写入玩家军队或装备仓库。
+策略竞技场保留一个玩家编队镜像，新增六套固定满配预设，替换原来按玩家等级缩放、未配装备的 Evolved-001 和 Siege 队伍。镜像保留所选 PvP 编队（`NDT_PVP = 2`）的角色、槽位、队长、皮肤、舰船类型、操作员类型及副技能类型；角色、技能、战术、合法反应堆和装备按同一满配规则重建，舰船与操作员升至表内最大档位。没有操作员时补 Serina。预设与镜像使用独立 UID，装备只进入战斗数据，不发到玩家仓库。
 
-另两队由公开攻略中明确提到的核心与可选角色组成，配置见 [bots.json](./bots.json)。它们是供本地练习的组合；固定队伍不应用每周禁用轮换，预设队伍没有完整毕业装备。单位等级按玩家当前编队平均等级调整，上限 110，技能等级从本地技能表读取。普通排位入口映射为同一策略竞技场 AI 对战。
+## 满配预设
 
-| 机器人 | 编队与来源 |
-| --- | --- |
-| Evolved-001 | Evolved-001、Sparrow、Glitch、Overflow、Ifrit、Grendel、Kyle Wong、Rearm Gaeun；Coffin-6。[Prydwen Evolved-001 Playbook](https://www.prydwen.gg/counter-side/guides/evolved-playbook/) 与作者的 [完整攻略](https://docs.google.com/document/d/1j5DyHPH3IAMIWkmhrgetf5ClJG1GNcDNGPhNUHiv3oU/edit) 说明了献祭、前排和反角色输出选项。 |
-| Goliath Siege | Goliath、ATF-35 Thunderbolt、Ironside、Awakened Yoo Mina、Blue Blood Elizabeth、Gremory、Horizon、Administration Shieldmen；Coffin-6。[Prydwen Siege Playbook](https://www.prydwen.gg/counter-side/guides/siege-playbook/) 与作者的 [完整攻略](https://docs.google.com/document/d/1SJJyj-8KrzUq0Sdy8mW2P1y2I15S4OQRJqlmBaxMWIQ/edit) 推荐这些攻船、治疗、收尾及保护角色。该攻略也说明此流派在舰船高等级时的弱点。 |
+配置见 [bots.json](./bots.json)。角色与职业组合以公开攻略的核心定位为依据，再按冻结版本可用角色组成固定练习队；它们不代表某周禁用轮换中的官方固定榜单。
 
-## 战斗与消费
+| 预设 | 核心及船 | 资料依据 |
+| --- | --- | --- |
+| Rosaria 空袭 | 觉醒 Rosaria、Ecclesia、觉醒 Karin、Shin Jia；Enterprise | [Rosaria](https://www.prydwen.gg/counter-side/characters/awakened-rosaria)、[Shin Jia](https://www.prydwen.gg/counter-side/characters/awakened-shin-jia) |
+| Regina 冰控 | 觉醒 Jake、Regina、Lyudmila；New Ohio | [Regina](https://www.prydwen.gg/counter-side/characters/awakened-regina)、[Jake](https://www.prydwen.gg/counter-side/characters/awakened-jake) |
+| Curian 士兵 | Curian、Felix、Felicette、Revenant、重装 Han Sorim / Rivet；Matador | [Curian 与 Matador 的配合](https://www.prydwen.gg/counter-side/characters/curian)、[Matador](https://www.prydwen.gg/counter-side/ships/matador) |
+| Shiyoon 反击 | 觉醒 Joo Shiyoon、Jake、Ministra；Lake Superior | [Joo Shiyoon](https://www.prydwen.gg/counter-side/characters/awakened-joo-shiyoon)、[Ministra](https://www.prydwen.gg/counter-side/characters/ministra) |
+| Hilde 坦克墙 | 觉醒 Hilde、Surya、Ecclesia，以及 Rosaria / Karin 后排；Lake Superior | [Hilde](https://www.prydwen.gg/counter-side/characters/awakened-hilde)、[Rosaria](https://www.prydwen.gg/counter-side/characters/awakened-rosaria) |
+| Ministra 减益 | Ministra、Lyudmila、Christina、Gremory 和重装 Laura；Enterprise | [Ministra 的召唤、减益与二级反应堆](https://www.prydwen.gg/counter-side/characters/ministra) |
 
-普通对战不会扣策略竞技场票（物品 13）；登录时票数至少补到 6 张。正常胜负采用 `LUA_PVP_CONST` 的基础奖励：胜利 75、失败 50 点。奖励从剩余可领奖点数（物品 6）扣除，同时增加实际竞技场货币（物品 5）；预算不足时只领取剩余点数。模拟模式不领奖，不更新普通战绩。
+每队八名角色均为 SSR（含觉醒及重装），固定 120 级、表内 13 阶限界、6 级战术、表内满技能；重装角色保留 10 级技能及 5 级队长技能。只给实际存在的反应堆对应最高等级，不生成不存在的反应堆。舰船按游戏表升到 130 级、3 阶限界，操作员 100 级、主技能 8 级、AoE 减伤副技能 11 级。操作员使用 [Olivie / Serina](https://www.prydwen.gg/counter-side/guides/operators-and-you) 的合法游戏表技能。
 
-每场结果只结算一次，账号保存最近 30 场胜负历史和本地分数、连胜记录。分数用于本地练习状态，不发放官方赛季排名或周结算奖励。
+## 装备
 
-## 客户端协议
+采用用户要求的专属或 CDR 路线，按 [PVP Gearing](https://www.prydwen.gg/counter-side/guides/pvp-gearing) 区分输出、前排和辅助。Rosaria 的攻略更优先自动攻击套，但也列出 CDR 方案；这里固定采用 CDR，方便形成可复现的满配挑战。
 
-- `2615 → 2616` 返回镜像和攻略机器人。
-- `2617 → 2618` 创建两边编队。客户端进入匹配场景 26 后发送 `606`，服务端再推送 `2604`。重复场景通知不会重复匹配，也不会因上场场景标记为 3 而放弃新战斗。
-- 普通排位 `2600` 直接返回 `2601` 并推送 `2604`。客户端 `NKMGameData` 使用 `NGT_PVP_STRATEGY = 20`，从而沿用本地 AI 和策略竞技场结果界面。
-- `807` 使用共享 managed 战斗启动链。Team B 开启自动部署、自动技能，保留游戏原生单位行为；两边使用游戏表的 `PVP_STAT_DEFAULT` 数值缩放。
-- 结算使用 `2623`，包含双方编队、实际胜负、消耗后的库存和基础奖励。结果重发不重复增加战绩或奖励。放弃对战按失败结算。PvP 不进入剧情或深潜奖励路径。
+- 每个角色四件装备，共 32 件；四件使用合法 CDR 套装 `241900`。
+- 输出使用对应职业的 T7 Maze；前排使用 T7 Inhibitor 武器、Maze 护甲与 Gordias 饰品；辅助使用 Hummingbird、Maze、Gordias，缺少该职业 Hummingbird 时使用合法 Maze。
+- 角色有合法 T7 专属且可洗出技能急速时，优先替换对应槽位；每角色最多一件专属，避免重复专属饰品。
+- 全部 +10、两项精度 100。主属性、强化增量、副属性与三槽潜能均从对应游戏表读取最大值，不写入该装备不能获得的属性。Inhibitor 使用三槽满技能急速潜能。套装及属性仍受游戏原生上限约束。
+- 禁止 `TEST`、职业错误、槽位错误及角色限制不符的装备。预设舰船不能依赖 KOR 初始化没有启用的专用标签；Albion `26039` 需要 `SHIP_C_ALBION`，因此使用无此限制的 Enterprise。
 
-上述枚举、`PvpState` 的 13 个字段顺序、匹配场景和自动部署入口已核对上游 Android APK 内的 `Assembly-CSharp.dll`。自动检查通过 `node tools/check-local-pvp.js` 和 `node tools/check-local-pvp-flow.js` 运行。启动日志记录目标、编队索引和单位类型；启动异常、缺失或无效的 managed 数据会返回失败，不扣票、不保留不可用战斗。
+## 匹配与结算
 
-修复后的 C# 服务已在 Android 独立临时目录使用真实游戏程序集和数据表验证。以去身份的 8 单位、27 件装备及操作员编队为输入，三种机器人均成功生成完整 `804` 与 `2618`；`807` 后输出 `808/809/822`，敌队原生单位和召唤物实际部署，三场均推进至 `NGS_FINISH`。另验证了在 `NGS_PLAY` 中主动部署玩家单位并收到成功的 `817`，双方战斗后的 `2623` 结算包通过真实客户端程序集完整反序列化和重序列化，胜负分别发放 75/50 点基础奖励。该验证没有启动游戏 UI、安装 APK 或修改应用存档。客户端触屏操作、动画和结果 UI 仍需安装新版后实测。联网实时玩家匹配和 League Draft 未实现。
+普通对战不扣策略竞技场票。真实胜负沿用 `LUA_PVP_CONST`：胜利 75、失败 50，消耗可领奖预算（物品 6），发放实际竞技场货币（物品 5），不足时仅发剩余预算。冻结表没有平局奖励项，因此平局不生成额外奖励、分数不变，并单独记录 `draws`。模拟战与加载完成前的退出不增加普通战绩、奖励或任务。
+
+同一启动请求可重试，但可靠 TCP 中已成功发送的 `2618` 不会再次发送：原客户端每次成功 ACK 都会重新预约场景 26，双 ACK 会干扰匹配转场。首次响应发送失败时保留同一准备完成的对局供重试。`2618` 同时包含选中的完整对手和七人列表，避免空对象清掉客户端选择缓存；其原生 gameData/runtimeData 保持不变，并严格检查冻结协议的空目标尾部后补齐字段。活动对战中不同目标、编队或模式会返回冲突错误，避免把另一个对手当作旧请求的重试。完整准备 `2618` 后，客户端进入场景 26 才发 `2604`；发送失败不会提前标记匹配已通知。启动失败会清理不可用战斗并记录具体原因。
+
+结算先完成双方编队、历史和结果数据的序列化，再提交货币与战绩。结果缓存保证重复通知不会重复领奖。历史的 `GainScore` / `MyScore` 与真实本地分数变化一致。每次实际结束至多计一次 `PVP_PLAY_ASYNC`；放弃对战按失败，实际原生平局按平局，缺少胜方信息不能自行猜测平局。
+
+## 验证
+
+`node tools/check-local-pvp.js` 核对满配镜像不会修改原账号，以及全部预设的等级、技能、职业、槽位、套装、满词条、满潜能、专属限制、UID 和库存隔离，并覆盖启动失败、不同请求冲突、匹配通知失败重试、胜败平局、加载前退出和结算序列化失败不发奖。`node tools/check-local-pvp-flow.js` 使用实际 listener 函数验证结算路由、权威胜方、平局、放弃、任务门禁与一次结算。
+
+原生验证必须用当前 C# 服务、真实冻结游戏程序集与 Lua 表；只有 `managed=true`、完整 `804/2618`、`807 → 808/809/822` 和实际单位进入 `NGS_PLAY` 才算战斗启动通过，不能以空状态或 866 字节占位包作为证据。公开合成配置可用于 Android 临时目录的独立 CLI，不需要读取或改写用户存档。联网实时玩家匹配和 League Draft 尚未实现。
+
+公开协议与 native 输入由 `node tools/make-local-pvp-protocol-fixtures.js --out /tmp/revivalside-pvp-max-fixtures --device-root /data/local/tmp/revivalside-managed-probe-20261008` 重建。包含七队 `startBattle` 输入、`2616` 列表和每队胜败平局三份 `2623` 反序列化请求；镜像输入以 80 级无装备角色验证对手升级到 120 级、32 件满装，完全不读取私有存档。
+
+匹配 ACK 可脱离完整游戏 runtime 验证：先运行 `PvpStartClientProtocolCheck <Managed目录> --make <原生JSON>`，再运行 `node tools/make-local-pvp-start-protocol-fixture.js <原生JSON> <补齐JSON>`，最后 `PvpStartClientProtocolCheck <Managed目录> --check <补齐JSON>`。工具只加载明确的原客户端协议类型，不遍历整个程序集；它验证原生 `PacketWriter/PacketReader` 的完整 round-trip、gameUID 与 game/runtime 保留、Jake 1202 的选中信息、七个目标，以及原客户端每个成功 `2618` 回调都会预约场景切换的 IL。

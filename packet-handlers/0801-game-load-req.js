@@ -5,6 +5,7 @@ const { writeSignedVarInt, writeNullObject, writeObjectList } = require("../modu
 const { eventDeckHasFreeShipSlot, eventDeckHasGivenUnitSlots, getEventDeckPlayerUnitSlots } = require("../modules/game-data");
 const worldMap = require("../modules/world-map");
 const explore = require("../modules/explore");
+const { prepareGuildArenaGameLoad, cancelGuildBattle } = require("../modules/guild");
 
 const NGT_DIVE = 5;
 
@@ -29,6 +30,12 @@ module.exports = {
     // Tutorial stages must come from tutorialStage.js, not the main-story catalog
     // wrapper, because that module carries the phase-specific tutorial runtime.
     const user = socket.session && socket.session.user;
+    let guildArenaStage = null;
+    try {
+      guildArenaStage = prepareGuildArenaGameLoad(ctx, user, req);
+    } catch (_) {
+      return rejectGameLoad(ctx, socket, packet, "invalid-guild-arena-game-load");
+    }
     const requestedStageId = Number((req && req.stageID) || 0);
     const requestedDungeonId = Number((req && req.dungeonID) || 0);
     const requestedFierceBossId = Number((req && req.fierceBossId) || 0);
@@ -61,7 +68,10 @@ module.exports = {
       return true;
     }
     let stage = null;
-    if (exploreStage) {
+    if (guildArenaStage) {
+      stage = guildArenaStage;
+      req.gameType = 16;
+    } else if (exploreStage) {
       stage = exploreStage;
     } else if (diveGameLoad) {
       const diveStage =
@@ -229,7 +239,12 @@ module.exports = {
         return true;
       }
       if (diveGameLoad && typeof worldMap.cancelDiveGameLoad === "function") worldMap.cancelDiveGameLoad(user, diveGameLoad);
+      if (guildArenaStage) cancelGuildBattle(ctx, user, guildArenaStage);
       return rejectGameLoad(ctx, socket, packet, "managed-game-load-failed");
+    }
+    if (guildArenaStage) {
+      cancelGuildBattle(ctx, user, guildArenaStage);
+      return rejectGameLoad(ctx, socket, packet, "guild-arena-managed-runtime-required");
     }
     if (ctx.config.REPLAY_CAPTURED_GAME_FLOW && ctx.capturedGameFlow) {
       ctx.sendCapturedGameThroughPacketId(socket, ctx.constants.GAME_LOAD_ACK, "game-load");

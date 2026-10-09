@@ -435,12 +435,30 @@ function replaceUserDb(target, incoming) {
   if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
     throw httpError(400, "User database must be a JSON object.");
   }
+  const guilds = incoming.guilds === undefined ? {} : incoming.guilds;
+  if (!guilds || typeof guilds !== "object" || Array.isArray(guilds)) {
+    throw httpError(400, "Guilds must be a JSON object.");
+  }
+  for (const [key, guild] of Object.entries(guilds)) {
+    if (!guild || typeof guild !== "object" || Array.isArray(guild)) {
+      throw httpError(400, `Guild entry ${key} must be a JSON object.`);
+    }
+    if (nonEmpty(guild.guildUid) !== key || !Array.isArray(guild.members)) {
+      throw httpError(400, `Guild entry ${key} must have a matching guildUid and a members array.`);
+    }
+    for (const member of guild.members) {
+      if (!member || typeof member !== "object" || Array.isArray(member) || !member.commonProfile || typeof member.commonProfile !== "object" || Array.isArray(member.commonProfile) || !nonEmpty(member.commonProfile.userUid)) {
+        throw httpError(400, `Guild entry ${key} has an invalid member profile.`);
+      }
+    }
+  }
   const next = {
     schemaVersion: Number(incoming.schemaVersion || 1),
     nextUserUid: String(incoming.nextUserUid || "1000000001"),
     nextFriendCode: String(incoming.nextFriendCode || "10000001"),
     activeUserUid: nonEmpty(incoming.activeUserUid),
     users: incoming.users && typeof incoming.users === "object" && !Array.isArray(incoming.users) ? incoming.users : {},
+    guilds,
   };
 
   for (const [key, user] of Object.entries(next.users)) {

@@ -6,6 +6,51 @@ const codec = require("../modules/packet-codec");
 const { setMiscItemBalance, getMiscItem } = require("../modules/inventory");
 const { loadPacketHandlers } = require("../server/packetHandlerLoader");
 const path = require("node:path");
+const schema = require("../packet-schema.json");
+
+function readGuildAck(packetId, payload) {
+  let offset = 0;
+  function scalar(reader) {
+    const result = reader(payload, offset);
+    offset = result.offset;
+    return result.value;
+  }
+  function uint() {
+    let value = 0;
+    let shift = 0;
+    while (offset < payload.length) {
+      const byte = payload[offset++];
+      value |= (byte & 127) << shift;
+      if (!(byte & 128)) return value;
+      shift += 7;
+    }
+    throw new Error("truncated guild list length");
+  }
+  function fields(definition) {
+    return Object.fromEntries(definition.map(field => [field.name, wire(field.wire)]));
+  }
+  function wire(definition) {
+    if (definition.kind === "list") return Array.from({ length: uint() }, () => wire(definition.element));
+    if (definition.kind === "object") {
+      if (!scalar(codec.readBool)) return null;
+      if (definition.type === "NKMItemMiscData") {
+        const item = { itemId: scalar(codec.readSignedVarInt), countFree: scalar(codec.readSignedVarLong), countPaid: scalar(codec.readSignedVarLong), bonusRatio: scalar(codec.readSignedVarInt), regDate: payload.readBigInt64LE(offset) };
+        offset += 8;
+        return item;
+      }
+      assert(schema.types[definition.type], `no ACK reader for ${definition.type}`);
+      return fields(schema.types[definition.type].fields);
+    }
+    if (definition.type === "string") return scalar(codec.readString);
+    if (definition.type === "bool") return scalar(codec.readBool);
+    if (definition.type === "long") return scalar(codec.readSignedVarLong);
+    if (definition.type === "DateTime") { const value = payload.readBigInt64LE(offset); offset += 8; return value; }
+    return scalar(codec.readSignedVarInt);
+  }
+  const result = fields(schema.packets[packetId].fields);
+  assert.equal(offset, payload.length, "the complete native ACK body must be consumed");
+  return result;
+}
 
 let now = new Date("2026-10-08T02:00:00Z");
 let saves = 0;
@@ -19,13 +64,18 @@ function request(user, id, req) {
   return guild.handleRequest(ctx, user, id, req);
 }
 
-const result = request(owner, 3400, { guildName: "Local Guild", guildJoinType: 0, badgeId: "0", greeting: "Welcome" });
+assert.equal(guild.getGuildNameLength("Guild123"), 8);
+assert.equal(guild.getGuildNameLength("公会"), 4, "native nickname length counts CJK characters as two units");
+for (const name of ["song", "ab", "AbCd1234", "公", "公会", "公".repeat(8), "カウンター", "길드"]) assert(guild.isValidGuildName(name), `native-compatible guild name ${name}`);
+for (const name of ["", "a", "a".repeat(17), "公".repeat(9), "Guild Name", " Guild", "Guild\n", "Guild_", "Guild!", "😀Guild"]) assert.equal(guild.isValidGuildName(name), false, `invalid guild name ${JSON.stringify(name)}`);
+
+const result = request(owner, 3400, { guildName: "LocalGuild", guildJoinType: 0, badgeId: "0", greeting: "Welcome" });
 const uid = owner.guildUid;
 assert.notEqual(uid, "0");
 assert.equal(result.guildData.members[0].commonProfile.userUid, "1");
 assert.equal(result.guildData.guildState, 1, "bundled client GuildState.Created is 1");
 assert.equal(getMiscItem(owner, 101).countFree, "500", "create cost is deducted once");
-assert.throws(() => request(owner, 3400, { guildName: "Again", guildJoinType: 0 }), /invalid/);
+assert.throws(() => request(owner, 3400, { guildName: "Again", guildJoinType: 0 }), /already/);
 assert.equal(getMiscItem(owner, 101).countFree, "500");
 assert.equal(request(guest, 3406, { keyword: "guild" }).list.length, 1);
 assert.equal(request(guest, 3410, { guildUid: uid }).needApproval, false);
@@ -67,6 +117,60 @@ assert.equal(request(guest, 3454, { guildUid: uid }).messages[0].message, "hello
 
 const registry = loadPacketHandlers([path.resolve(__dirname, "../packet-handlers"), path.resolve(__dirname, "../modules")], { rootDir: path.resolve(__dirname, "..") });
 assert(registry.get(3400).fileName.startsWith("modules/guild/handlers/"));
+const packetOwner = { userUid: "3", friendCode: "103", nickname: "PacketOwner", level: 20, inventory: {} };
+setMiscItemBalance(packetOwner, 101, 1500);
+setMiscItemBalance(packetOwner, 1, 60000);
+let persistedPacketDb;
+const membershipNotifications = [];
+const packetCtx = { ...ctx, userDb: { users: { 3: packetOwner } }, saveUserDb() { persistedPacketDb = JSON.parse(JSON.stringify(this.userDb)); }, sendServerGamePacket(_socket, id, payload) { membershipNotifications.push({ id, payload }); } };
+const packetSocket = { session: { user: packetOwner } };
+const badgeId = 8005011002n;
+const createPacket = { sequence: 1, payload: Buffer.concat([codec.writeString("PacketGuild"), codec.writeSignedVarInt(0), codec.writeSignedVarLong(badgeId), codec.writeString("Welcome")]) };
+assert.doesNotThrow(() => registry.get(3400).handle(packetCtx, packetSocket, createPacket), "successful CREATE must send its native item-cost ACK without dropping the connection");
+assert.equal(packetCtx.lastAck.id, 3401);
+const createAck = readGuildAck(3401, packetCtx.lastAck.payload);
+assert.equal(createAck.errorCode, 0);
+assert.equal(createAck.costItemDataList.length, 1);
+assert.equal(createAck.costItemDataList[0].itemId, 101);
+assert.equal(createAck.costItemDataList[0].countFree, 500n);
+assert.equal(createAck.guildData.badgeId, badgeId, "native badge IDs must retain all 64-bit data");
+assert.equal(createAck.guildData.members[0].grade, 0);
+assert.equal(createAck.privateGuildData.guildUid, createAck.guildData.guildUid);
+assert.equal(persistedPacketDb.users[3].guildUid, createAck.guildData.guildUid.toString());
+assert.equal(Object.keys(persistedPacketDb.guilds).length, 1);
+registry.get(3400).handle(packetCtx, packetSocket, createPacket);
+assert.equal(readGuildAck(3401, packetCtx.lastAck.payload).errorCode, 20431, "already-created membership must report already joined, never invalid name");
+assert.equal(getMiscItem(packetOwner, 101).countFree, "500");
+assert.equal(membershipNotifications.at(-1).id, 3416, "existing members receive their real guild data to restore the client guild page");
+assert.equal(readGuildAck(3416, membershipNotifications.at(-1).payload).guildData.guildUid.toString(), packetOwner.guildUid);
+const secondName = { ...createPacket, payload: Buffer.concat([codec.writeString("AnotherName"), codec.writeSignedVarInt(0), codec.writeSignedVarLong(badgeId), codec.writeString("")]) };
+registry.get(3400).handle(packetCtx, packetSocket, secondName);
+assert.equal(readGuildAck(3401, packetCtx.lastAck.payload).errorCode, 20431, "changing names cannot bypass an existing membership");
+assert.equal(getMiscItem(packetOwner, 101).countFree, "500");
+assert.equal(Object.keys(packetCtx.userDb.guilds).length, 1);
+const outsider = { userUid: "4", level: 20, inventory: {} };
+setMiscItemBalance(outsider, 101, 1500);
+packetCtx.userDb.users[4] = outsider;
+const outsiderSocket = { session: { user: outsider } };
+registry.get(3400).handle(packetCtx, outsiderSocket, createPacket);
+assert.equal(readGuildAck(3401, packetCtx.lastAck.payload).errorCode, 20442, "true duplicate names have the native duplicate-name code");
+registry.get(3400).handle(packetCtx, outsiderSocket, { ...createPacket, payload: Buffer.concat([codec.writeString("Guild Name"), codec.writeSignedVarInt(0), codec.writeSignedVarLong(badgeId), codec.writeString("")]) });
+assert.equal(readGuildAck(3401, packetCtx.lastAck.payload).errorCode, 20436, "invalid character or length has the native invalid-name code");
+assert.equal(getMiscItem(outsider, 101).countFree, "1500");
+assert.equal(guild.buildGuildDataUpdatedNotPayload(packetCtx, outsider), null, "guildless accounts must not receive another account's guild membership");
+assert.equal(readGuildAck(3416, guild.buildGuildDataUpdatedNotPayload(packetCtx, packetOwner)).guildData.guildUid.toString(), packetOwner.guildUid, "login boot can restore native MyGuildData for an existing member");
+const packetGuildUid = BigInt(packetOwner.guildUid);
+registry.get(3414).handle(packetCtx, packetSocket, { sequence: 2, payload: codec.writeSignedVarLong(packetGuildUid) });
+assert.equal(readGuildAck(3415, packetCtx.lastAck.payload).guildData.guildUid, packetGuildUid);
+assert.doesNotThrow(() => registry.get(3461).handle(packetCtx, packetSocket, { sequence: 3, payload: Buffer.concat([codec.writeSignedVarLong(packetGuildUid), codec.writeSignedVarInt(2), codec.writeSignedVarInt(1)]) }), "donation must serialize its native item-cost list");
+assert.equal(packetCtx.lastAck.id, 3462);
+assert.equal(codec.readSignedVarInt(packetCtx.lastAck.payload).value, 0);
+assert.equal(getMiscItem(packetOwner, 1).countFree, "30000");
+assert.doesNotThrow(() => registry.get(3466).handle(packetCtx, packetSocket, { sequence: 4, payload: Buffer.concat([codec.writeSignedVarLong(packetGuildUid), codec.writeSignedVarInt(1)]) }), "welfare-point purchase must serialize its native item-cost list");
+assert.equal(packetCtx.lastAck.id, 3467);
+assert.equal(codec.readSignedVarInt(packetCtx.lastAck.payload).value, 0);
+assert.equal(getMiscItem(packetOwner, 101).countFree, "470");
+assert.equal(codec.readSignedVarLong(guild.buildPrivateGuildData(persistedPacketDb.users[3], { now, userDb: persistedPacketDb })).value, packetGuildUid, "the persisted guild remains visible after restoring the login membership");
 const socket = { session: { user: owner } };
 registry.get(3414).handle(ctx, socket, { sequence: 1, payload: codec.writeSignedVarLong(BigInt(uid)) });
 assert.equal(ctx.lastAck.id, 3415);
@@ -109,10 +213,10 @@ const welfare = request(owner, 3466, { guildUid: uid, buyCount: 2 });
 assert.equal(getMiscItem(owner, 101).countFree, "440");
 assert.equal(getMiscItem(owner, 23).countFree, "10");
 assert(welfare.rewardData.length > 0);
-const renamed = request(owner, 3500, { newName: "Renamed Guild" });
-assert.equal(renamed.prevName, "Local Guild");
-assert.equal(guest.guildName, "Renamed Guild");
-assert.throws(() => request(owner, 3500, { newName: "Another Guild" }), /cooldown/);
+const renamed = request(owner, 3500, { newName: "RenamedGuild" });
+assert.equal(renamed.prevName, "LocalGuild");
+assert.equal(guest.guildName, "RenamedGuild");
+assert.throws(() => request(owner, 3500, { newName: "AnotherGuild" }), /cooldown/);
 request(owner, 3402, { guildUid: uid });
 assert.equal(ctx.userDb.guilds[uid].guildState, 2);
 assert.throws(() => request({ userUid: "3", guildUid: "0" }, 3410, { guildUid: uid }), /closed/);

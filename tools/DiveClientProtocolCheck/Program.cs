@@ -20,6 +20,18 @@ var client = AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(manag
 var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
 var manager = client.GetType("NKM.NKMDiveGameManager", throwOnError: true)!;
 var canMove = manager.GetMethod("CanMoveForward", flags)!;
+var nativeUpdate = client.GetType("NKM.NKMDiveGameData", throwOnError: true)!.GetMethod("UpdateData", flags)!;
+var updateUser = client.GetType("NKC.PacketHandler.NKCPacketHandlersLobby", throwOnError: true)!
+    .GetMethods(flags).Single(method => method.Name == "UpdateUserData" && method.GetParameters().Length == 14);
+var updateUserIl = updateUser.GetMethodBody()!.GetILAsByteArray()!;
+// Actual outer handler: ldloc.3; dungeonData ? win : false; ldarg.s 5;
+// callvirt NKMDiveGameData.UpdateData. Check the original DLL, not an assumed
+// inner UpdateData(true) call, before using the packet's nullable marker.
+var gateIl = new byte[] { 0x09, 0x03, 0x2c, 0x03, 0x02, 0x2b, 0x01, 0x16, 0x0e, 0x05, 0x6f }
+    .Concat(BitConverter.GetBytes(nativeUpdate.MetadataToken)).ToArray();
+Require(Enumerable.Range(0, updateUserIl.Length - gateIl.Length + 1)
+    .Any(offset => updateUserIl.AsSpan(offset, gateIl.Length).SequenceEqual(gateIl)),
+    "original GAME_END handler gates Dive Rebuild on non-null dungeonClearData and win");
 using var fixtures = JsonDocument.Parse(File.ReadAllText(args[1]));
 var checks = 0;
 
@@ -77,6 +89,51 @@ foreach (var fixture in fixtures.RootElement.EnumerateArray())
     var currentSet = baseJson.GetProperty("slotSetIndex").GetInt32();
     var battleButton = currentSet == (distance == 0 ? 0 : 1);
     Require(battleButton == fixture.GetProperty("expectedBattleButton").GetBoolean(), $"{name}: native battle/search button contract");
+    if (fixture.TryGetProperty("packetSequence", out var packetSequence))
+    {
+        var startingRows = floorJson.GetProperty("slotSets");
+        var driftWithoutMarker = false;
+        var phantomBossColumn = false;
+        foreach (var packet in packetSequence.EnumerateArray())
+        {
+            ApplyPacket(packet, game, floor, player, playerBase, false);
+            var expected = packet.GetProperty("expected");
+            AssertPlayer(playerBase, expected.GetProperty("player").GetProperty("base"), name!);
+            AssertFloor(sets, expected.GetProperty("floor"), name!);
+            AssertSquads(squads, expected.GetProperty("player").GetProperty("squads"), name!);
+            checks++;
+        }
+        if (fixture.GetProperty("replayWithoutDungeonClearData").GetBoolean())
+        {
+            // Reuse the same original client object for a second replay, reset
+            // once at START, and emulate the old server's null win marker.
+            FillFloor(sets, startingRows);
+            Set(player, "playerBase", PlayerBase(baseJson));
+            playerBase = player.GetType().GetField("playerBase", flags)!.GetValue(player)!;
+            foreach (var packet in packetSequence.EnumerateArray())
+            {
+                ApplyPacket(packet, game, floor, player, playerBase, true);
+                var expectedRows = packet.GetProperty("expected").GetProperty("floor").GetProperty("slotSets");
+                if (FloorShape(sets) != string.Join(",", expectedRows.EnumerateArray().Select(row => row.GetProperty("slots").GetArrayLength())))
+                    driftWithoutMarker = true;
+                if (Convert.ToInt32(playerBase.GetType().GetField("state", flags)!.GetValue(playerBase)) == 0 &&
+                    Convert.ToInt32(playerBase.GetType().GetField("distance", flags)!.GetValue(playerBase)) == floorJson.GetProperty("randomSetCount").GetInt32())
+                {
+                    var nextIndex = Convert.ToInt32(player.GetType().GetMethod("GetNextSlotSetIndex", flags)!.Invoke(player, null));
+                    var nextSlots = (IList)sets[nextIndex]!.GetType().GetField("slots", flags)!.GetValue(sets[nextIndex])!;
+                    phantomBossColumn = nextSlots.Count > 1 &&
+                        Convert.ToInt32(canMove.Invoke(null, new object[] { 0, user })) == 0 &&
+                        Convert.ToInt32(canMove.Invoke(null, new object[] { 1, user })) == 322 &&
+                        Convert.ToInt32(canMove.Invoke(null, new object[] { 2, user })) == 322;
+                }
+            }
+            Require(driftWithoutMarker && phantomBossColumn,
+                $"{name}: the old missing marker reproduces redraw drift and a three-slot boss column with only slot 0 movable");
+            Console.WriteLine($"{name}: old null marker reproduces the reported phantom boss column; corrected packets stay identical at every step");
+            checks++;
+        }
+        continue;
+    }
     if (fixture.TryGetProperty("afterMove", out var afterMove))
     {
         var moveSync = fixture.GetProperty("moveSync");
@@ -158,7 +215,8 @@ foreach (var fixture in fixtures.RootElement.EnumerateArray())
         var sync = Sync(expectedBase);
         // This is the client's actual successful GAME_END_NOT update, including
         // floor rebuilding before UpdatedPlayer is copied into the player.
-        game.GetType().GetMethod("UpdateData", flags)!.Invoke(game, new object[] { true, sync });
+        var rebuildForWin = fixture.GetProperty("gameEndDungeonClearDataPresent").GetBoolean();
+        game.GetType().GetMethod("UpdateData", flags)!.Invoke(game, new object[] { rebuildForWin, sync });
         foreach (var property in expectedBase.EnumerateObject())
             if (property.Value.ValueKind == JsonValueKind.Number)
                 Require(Convert.ToInt32(playerBase.GetType().GetField(property.Name, flags)!.GetValue(playerBase)) == property.Value.GetInt32(),
@@ -257,6 +315,62 @@ object Sync(JsonElement json, JsonElement changedSquads = default)
     if (changedSquads.ValueKind == JsonValueKind.Array)
         foreach (var item in changedSquads.EnumerateArray()) values.Add(Squad(item));
     return sync;
+}
+
+void ApplyPacket(JsonElement packet, object game, object floor, object player, object playerBase, bool omitWinMarker)
+{
+    var syncJson = packet.GetProperty("sync");
+    var update = syncJson.GetProperty("updatedPlayer");
+    if (syncJson.TryGetProperty("updatedSlots", out var updates))
+        foreach (var updated in updates.EnumerateArray())
+        {
+            var target = floor.GetType().GetMethod("GetSlot", flags)!.Invoke(floor,
+                new object[] { updated.GetProperty("slotSetIndex").GetInt32(), updated.GetProperty("slotIndex").GetInt32() })!;
+            foreach (var property in updated.GetProperty("slot").EnumerateObject()) Set(target, property.Name, property.Value.GetInt32());
+        }
+    var id = packet.GetProperty("packetId").GetInt32();
+    if (id == 1209 && update.GetProperty("state").GetInt32() is 0 or 4)
+    {
+        var distance = Convert.ToInt32(playerBase.GetType().GetField("distance", flags)!.GetValue(playerBase));
+        var nextSet = Convert.ToInt32(player.GetType().GetMethod("GetNextSlotSetIndex", flags)!.Invoke(player, null));
+        floor.GetType().GetMethod("Rebuild", flags)!.Invoke(floor,
+            new object[] { distance, nextSet, update.GetProperty("slotIndex").GetInt32() });
+    }
+    var rebuild = id == 811 && packet.GetProperty("win").GetBoolean() &&
+        !omitWinMarker && packet.GetProperty("dungeonClearDataPresent").GetBoolean();
+    var changed = syncJson.TryGetProperty("updatedSquads", out var changedSquads) ? changedSquads : default;
+    nativeUpdate.Invoke(game, new object[] { rebuild, Sync(update, changed) });
+}
+
+void FillFloor(IList sets, JsonElement source)
+{
+    sets.Clear();
+    foreach (var row in source.EnumerateArray())
+    {
+        var set = New("NKM.NKMDiveSlotSet");
+        var slots = NewList(set, "slots");
+        foreach (var entry in row.GetProperty("slots").EnumerateArray())
+        {
+            var slot = New("NKM.NKMDiveSlot");
+            foreach (var property in entry.EnumerateObject()) Set(slot, property.Name, property.Value.GetInt32());
+            slots.Add(slot);
+        }
+        sets.Add(set);
+    }
+}
+
+string FloorShape(IList sets) => string.Join(",", sets.Cast<object>()
+    .Select(set => ((IList)set.GetType().GetField("slots", flags)!.GetValue(set)!).Count));
+
+void AssertSquads(IDictionary squads, JsonElement expected, string name)
+{
+    foreach (var entry in expected.EnumerateObject())
+        foreach (var property in entry.Value.EnumerateObject())
+        {
+            var squad = squads[int.Parse(entry.Name)]!;
+            var actual = Convert.ToDouble(squad.GetType().GetField(property.Name, flags)!.GetValue(squad));
+            Require(Math.Abs(actual - property.Value.GetDouble()) < 0.01, $"{name}: squad {entry.Name}/{property.Name}");
+        }
 }
 
 void AssertPlayer(object playerBase, JsonElement expected, string name)

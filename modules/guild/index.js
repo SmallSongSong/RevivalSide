@@ -7,6 +7,7 @@ const { getMiscItem, spendMiscItem, toBigInt } = require("../inventory");
 const { createEmptyReward, grantRewardByType, mergeReward } = require("../reward");
 const { buildPlayerDeckForGameLoad } = require("../unit");
 const { dateTimeBinaryForDate } = require("../server-time");
+const cooperative = require("./cooperative");
 
 const MASTER = 0;
 const MEMBER = 2;
@@ -18,6 +19,18 @@ const DAY_MS = 86400000;
 function guildConstants() {
   const table = readGameplayTable("ab_script", "LUA_COMMON_CONST.json") || {};
   return (table.globals && table.globals.Guild) || table.Guild || {};
+}
+
+function getGuildNameLength(name) {
+  let length = 0;
+  for (let index = 0; index < name.length; index += 1) length += name.charCodeAt(index) <= 255 ? 1 : 2;
+  return length;
+}
+
+function isValidGuildName(name) {
+  // NKCUIGuildCreate checks weighted length 2..16; Global names permit these scripts.
+  const length = getGuildNameLength(name);
+  return length >= 2 && length <= 16 && /^[A-Za-z0-9\u3040-\u30ff\u4e00-\u9fa5\uac00-\ud7a3]+$/.test(name);
 }
 
 function ensureGuildStore(ctx) {
@@ -78,6 +91,14 @@ function buildGuildSimpleData(user) {
     guildName: String(user && user.guildName || ""),
     badgeId: String(user && user.guildBadgeId || "0"),
   });
+}
+
+function buildGuildDataUpdatedNotPayload(ctx, user) {
+  const store = ensureGuildStore(ctx);
+  const guild = user && store[String(user.guildUid || 0)];
+  if (!guild || !guild.members.some(member => member.commonProfile.userUid === String(user.userUid))) return null;
+  const data = handleRequest(ctx, user, 3414, { guildUid: guild.guildUid });
+  return encodeFields(schema.packets[3416].fields, { guildData: data.guildData });
 }
 
 function profile(user) {
@@ -158,10 +179,16 @@ function handleRequest(ctx, user, id, req) {
   const store = ensureGuildStore(ctx);
   const now = binaryDate(nowDate(ctx));
   const base = { errorCode: 0, ...req };
+  if ([3471, 3473, 3475, 3477, 3483, 3491, 3494].includes(id)) {
+    const guild = requireGuild(ctx, user, req.guildUid || user.guildUid);
+    return { ...base, ...cooperative.request(ctx, user, guild, id, req, { guildBossMaxHp }) };
+  }
   switch (id) {
     case 3400: {
-      const name = String(req.guildName || "").trim();
-      if (!name || name.length > 32 || Object.values(store).some(g => g.name.toLocaleLowerCase() === name.toLocaleLowerCase()) || toBigInt(user.guildUid) !== 0n) throw new Error("invalid or duplicate guild name");
+      const name = String(req.guildName || "");
+      if (toBigInt(user.guildUid) !== 0n) throw new Error("already in a guild");
+      if (!isValidGuildName(name)) throw new Error("invalid guild name");
+      if (Object.values(store).some(g => g.name.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new Error("duplicate guild name");
       const settings = guildConstants();
       if (Number(user.level || 1) < Number(settings.Creation && settings.Creation.UserMinLevel || 15)) throw new Error("guild creation level required");
       const costs = settings.Creation && settings.Creation.ReqMiscItems || [];
@@ -402,31 +429,15 @@ function handleRequest(ctx, user, id, req) {
       if (!message) throw new Error("message not found");
       return { ...base, textTranslated: message.message };
     }
-    case 3471: {
-      requireGuild(ctx, user, req.guildUid);
-      const { season, bosses } = guildDungeonCatalog(ctx);
-      if (!season || !bosses.length) throw new Error("guild season unavailable");
-      const arenaRows = readGameplayTableRecords("ab_script", "LUA_GUILD_DUNGEON_INFO_TEMPLET.json").filter(r => r.m_SeasonDungeonGroup === season.m_SeasonDungeonGroup);
-      const schedule = readGameplayTableRecords("ab_script", "LUA_GUILD_DUNGEON_SCHEDULE_TEMPLET.json").find(r => r.m_SeasonDungeonGroup === season.m_SeasonDungeonGroup && r.m_SeasonSessionIndex === 1);
-      const dungeonIds = schedule ? Object.entries(schedule).filter(([key]) => /^m_UseSeasonDungeonID_/.test(key)).map(([, id]) => id) : [];
-      const arenaIndices = Array.from(new Set(arenaRows.filter(r => dungeonIds.includes(r.m_SeasonDungeonID)).map(r => r.m_StageArenaIndex))).sort((a, b) => a - b);
-      return { ...base, guildDungeonState: 1, seasonId: season.m_SeasonID, sessionId: 1,
-        currentSessionEndDate: binaryDate(new Date(nowDate(ctx).getTime() + 7 * DAY_MS)),
-        NextSessionStartDate: binaryDate(new Date(nowDate(ctx).getTime() + 8 * DAY_MS)),
-        arenaList: arenaIndices.map(arenaIndex => ({ arenaIndex, totalMedalCount: 0, playUserUid: "0", flagIndex: 0 })),
-        lastSeasonRewardData: [{ category: 0, totalValue: 0, receivedValue: 0 }, { category: 1, totalValue: 0, receivedValue: 0 }],
-        bossData: { stageId: bosses[0].m_StageID, playCount: 0, remainHp: guildBossMaxHp(bosses[0].m_StageID), totalPoint: 0, extraPoint: 0, playUserUid: "0", orderIndex: 0 }, arenaTicketBuyCount: 0, canReward: false };
-    }
-    case 3473: {
-      const guild = requireGuild(ctx, user, req.guildUid);
-      return { ...base, memberInfoList: guild.members.map(m => ({ profile: m.commonProfile, arenaList: [], bossPoint: 0 })) };
-    }
     default:
       throw new Error("guild operation unavailable locally");
   }
 }
 
 function encodeType(type, value = {}) {
+  // Native NKM models are omitted from the generated ClientPacket schema.
+  if (type === "NKMItemMiscData") return codec.buildItemMiscData(value);
+  if (type === "NKMRewardData") return codec.buildRewardData(value);
   const definition = schema.types[type];
   if (!definition) throw new Error(`missing guild protocol type ${type}`);
   return encodeFields(definition.fields, value);
@@ -474,9 +485,7 @@ function decodeRequest(id, payload) {
 }
 
 function guildDungeonCatalog(ctx) {
-  const seasons = readGameplayTableRecords("ab_script", "LUA_GUILD_SEASON_TEMPLET.json");
-  const tags = new Set(ctx.getEffectiveContentsTags ? ctx.getEffectiveContentsTags([]) : []);
-  const season = [...seasons].reverse().find(s => (s.listContentsTagAllow || []).some(tag => tags.has(tag))) || seasons[0];
+  const { season } = cooperative.selectedSeason(ctx);
   const bosses = readGameplayTableRecords("ab_script", "LUA_GUILD_RAID_TEMPLET.json").filter(r => season && r.m_SeasonRaidGroup === season.m_SeasonRaidGroup).sort((a, b) => a.m_RaidStageIndex - b.m_RaidStageIndex);
   return { season, bosses };
 }
@@ -493,32 +502,56 @@ function guildBossMaxHp(dungeonId) {
   return Math.fround(Math.fround(Number(data.m_Stat.NST_HP || 0)) + Math.fround(Number(data.m_StatPerLevel.NST_HP || 0) * (Number(base.m_DungeonLevel || dungeon.m_BossUnitLevel || 1) - 1)));
 }
 
+function buildGuildSeasonIntervals(ctx, user) {
+  const store = ensureGuildStore(ctx);
+  const guild = user && store[String(user.guildUid || 0)];
+  return cooperative.buildSeasonIntervals(ctx, guild || null, { guildBossMaxHp });
+}
+
+function prepareGuildArenaGameLoad(ctx, user, req) {
+  if (!cooperative.catalog().arenas.some(row => row.m_SeasonDungeonID === Number(req.dungeonID || req.stageID))) return null;
+  const guild = requireGuild(ctx, user, user.guildUid);
+  return cooperative.prepareArena(ctx, user, guild, req, { guildBossMaxHp });
+}
+
 function prepareGuildPractice(ctx, user, req) {
-  requireGuild(ctx, user, user.guildUid);
-  if (!req.isPractice) throw new Error("guild operation unavailable locally");
-  const { bosses } = guildDungeonCatalog(ctx);
-  const boss = bosses.find(b => Number(b.m_StageID) === Number(req.bossStageId));
-  if (!boss) throw new Error("invalid guild boss stage");
-  const stage = ctx.getGenericStageForRequest && ctx.getGenericStageForRequest({ stageID: boss.m_StageID, dungeonID: boss.m_StageID });
-  if (!stage || !stage.dungeonID) throw new Error("guild boss dungeon unavailable");
-  const loadReq = { isDev: false, selectDeckIndex: req.selectDeckIndex, stageID: stage.stageId, dungeonID: stage.dungeonID, gameType: 25, rewardMultiply: 1 };
-  const playerDeck = buildPlayerDeckForGameLoad(user, loadReq);
-  if (!playerDeck || !playerDeck.units.length) throw new Error("guild raid deck required");
-  return { req: loadReq, stage: { ...stage, gameType: 25, miscMode: "guild-practice", eventDeckId: 0, EventDeckId: 0, tutorial: false, cutsceneOnly: false, playerDeck } };
+  const guild = requireGuild(ctx, user, user.guildUid);
+  return cooperative.prepareBoss(ctx, user, guild, req, { guildBossMaxHp });
+}
+
+function completeGuildBattle(ctx, user, game, state, options = {}) {
+  if (!user || !game || !game.guildUid) return null;
+  const guild = requireGuild(ctx, user, game.guildUid);
+  const result = cooperative.completeBattle(ctx, user, guild, game, state || {}, options, { guildBossMaxHp });
+  if (!result) return null;
+  if (ctx.config && ctx.config.USE_LOCAL_USER_DB && ctx.saveUserDb) ctx.saveUserDb();
+  return { ...result, packets: result.packets.map(packet => ({ packetId: packet.packetId, payload: encodeFields(schema.packets[packet.packetId].fields, packet.data), label: `guild-coop-${packet.packetId}` })) };
+}
+
+function cancelGuildBattle(ctx, user, game = null) {
+  if (!user || toBigInt(user.guildUid) === 0n) return null;
+  const guild = requireGuild(ctx, user, user.guildUid);
+  const result = cooperative.cancelBattle(ctx, user, guild, game, { guildBossMaxHp });
+  if (!result) return null;
+  if (ctx.config && ctx.config.USE_LOCAL_USER_DB && ctx.saveUserDb) ctx.saveUserDb();
+  return { packets: result.packets.map(packet => ({ packetId: packet.packetId, payload: encodeFields(schema.packets[packet.packetId].fields, packet.data), label: `guild-coop-${packet.packetId}` })) };
 }
 
 function createGuildPracticeHandler() {
   return { packetId: 3485, name: "GUILD_DUNGEON_BOSS_GAME_LOAD_REQ", handle(ctx, socket, packet) {
+    let preparedGame = null;
     try {
       const user = socket.session && socket.session.user;
       if (!user || !user.userUid) throw new Error("login required");
       const req = decodeRequest(3485, ctx.decryptCopy ? ctx.decryptCopy(packet.payload) : packet.payload);
       const battle = prepareGuildPractice(ctx, user, req);
+      preparedGame = battle.stage;
       if (!ctx.config || !ctx.config.DYNAMIC_BATTLE_MANAGER || !ctx.sendDynamicGameLoadAck || !ctx.sendDynamicGameLoadAck(socket, battle.req, battle.stage)) throw new Error("guild boss combat unavailable");
       return true;
     } catch (err) {
       console.log(`[guild:practice] ${err.message}`);
-      ctx.sendGameResponse(socket, packet, 804, Buffer.concat([codec.writeSignedVarInt(guildErrorCode(err.message)), codec.writeNullObject(), codec.writeObjectList([])]), "guild-practice-unavailable");
+      if (preparedGame) cancelGuildBattle(ctx, socket.session && socket.session.user, preparedGame);
+      ctx.sendGameResponse(socket, packet, 804, Buffer.concat([codec.writeSignedVarInt(err.errorCode || guildErrorCode(err.message)), codec.writeNullObject(), codec.writeObjectList([])]), "guild-practice-unavailable");
       return true;
     }
   } };
@@ -528,6 +561,7 @@ function guildErrorCode(message) {
   const errors = {
     "already in a guild": 20431, "guild not found": 20432, "guild membership required": 20443,
     "guild master required": 20616, "guild creation level required": 20437,
+    "invalid guild name": 20436, "duplicate guild name": 20442,
     "invalid or duplicate guild name": 20436, "guild is full": 20467,
     "guild closed to applications": 20473, "application not found": 20472,
     "local player unavailable": 20445, "invitation not found": 20444,
@@ -556,11 +590,15 @@ function createGuildHandlers() {
         if (ctx.config && ctx.config.USE_LOCAL_USER_DB && ctx.saveUserDb) ctx.saveUserDb();
         if (ctx.invalidateJoinLobbyAckPayloadCache) ctx.invalidateJoinLobbyAckPayloadCache("guild-state");
       } catch (err) {
-        response = { ...req, errorCode: guildErrorCode(err.message) };
+        response = { ...req, errorCode: err.errorCode || guildErrorCode(err.message) };
         console.log(`[guild:${request.id}] ${err.message}`);
       }
       const ackId = request.id + 1;
       ctx.sendGameResponse(socket, packet, ackId, encodeFields(schema.packets[ackId].fields, response), `guild-${request.id}`);
+      if (request.id === 3400 && response.errorCode === 20431 && ctx.sendServerGamePacket) {
+        const guildData = buildGuildDataUpdatedNotPayload(ctx, user);
+        if (guildData) ctx.sendServerGamePacket(socket, 3416, guildData, "guild-existing-membership");
+      }
       if (!response.errorCode && request.id === 3451 && ctx.sendServerGamePacket) {
         const guild = ensureGuildStore(ctx)[String(user.guildUid)];
         ctx.sendServerGamePacket(socket, 3453, encodeFields(schema.packets[3453].fields, { message: guild.messages[guild.messages.length - 1] }), "guild-chat");
@@ -575,4 +613,4 @@ function createGuildHandlers() {
   return [...handlers, createGuildPracticeHandler()];
 }
 
-module.exports = { createGuildHandlers, handleRequest, encodeType, encodeFields, decodeRequest, guildDungeonCatalog, prepareGuildPractice, reconcileGuildMembership, privateGuildData, buildPrivateGuildData, buildGuildSimpleData };
+module.exports = { createGuildHandlers, handleRequest, encodeType, encodeFields, decodeRequest, guildDungeonCatalog, prepareGuildPractice, reconcileGuildMembership, privateGuildData, buildPrivateGuildData, buildGuildSimpleData, buildGuildDataUpdatedNotPayload, getGuildNameLength, isValidGuildName, buildGuildSeasonIntervals, prepareGuildArenaGameLoad, completeGuildBattle, cancelGuildBattle };

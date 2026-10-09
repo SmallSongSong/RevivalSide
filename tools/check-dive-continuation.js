@@ -2,6 +2,11 @@
 
 const assert = require("node:assert/strict");
 const worldMap = require("../modules/world-map");
+const codec = require("../modules/packet-codec");
+const rewardModule = require("../modules/reward");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const path = require("node:path");
 const { readGameplayTableRecords } = require("../modules/gameplay-jsons");
 const { setDeckUnit, ensureDeck } = require("../modules/unit");
 const { writeSignedVarInt, writeIntList, writeBool, writeByte, readSignedVarInt, readBool, readVarInt, readSignedVarIntList } = require("../modules/packet-codec");
@@ -9,6 +14,52 @@ const { writeSignedVarInt, writeIntList, writeBool, writeByte, readSignedVarInt,
 const handlers = new Map(worldMap.createWorldMapHandlers().map((handler) => [handler.packetId, handler]));
 const now = 621355968000000000n + 17913888000000000n;
 const nativeFixtures = [];
+const listenerSource = fs.readFileSync(path.join(__dirname, "../server/listener.js"), "utf8");
+const emptyPacketPart = () => Buffer.alloc(0);
+let actualDiveResult;
+const endSandbox = {
+  NGT_FIERCE: 14, fierceRecords: require("../modules/misc-stages/fierce-result"),
+  ...codec, Buffer, console: { log() {} }, NGT_PHASE: 15, NGT_DIVE: 5, NGT_EXPLORE: 29, USE_LOCAL_USER_DB: false,
+  worldMap: { ...worldMap, completeDiveBattle(...args) { actualDiveResult = worldMap.completeDiveBattle(...args); return actualDiveResult; } },
+  stageIdForDungeonId: () => 0, resolveDungeonIdForStageProgress: (_stage, game) => game.dungeonID,
+  isRaidDynamicGame: () => false, buildBattleGameRecordState: (state) => state,
+  getBattleEndPlayTime: (state) => state.gameTime || 30, buildBattleMissionState: (state) => state,
+  resolveBattleWin: (state, override) => override.win ?? state.win,
+  resolveDungeonMissionResults: () => ({ missionResult1: true, missionResult2: true }),
+  normalizeBattleResultState: (state, win) => { state.win = win; }, isCutsceneOnlyDungeon: () => false,
+  maybeRecordRaidBattleResultForReplay: () => null, dateTimeBinaryNow: () => now,
+  createEmptyReward: rewardModule.createEmptyReward,
+  getOrGrantStageClearLoot: () => { throw new Error("Dive marker must not grant dungeon loot"); },
+  spendStageReqItemCostForReplay: () => { throw new Error("Dive marker must not spend another stage cost"); },
+  buildMainStoryEpisodeCompleteDataForStage: () => { throw new Error("Dive marker must not clear an episode"); },
+  buildFierceResultState: () => ({}), buildBattleDeckIndexData: emptyPacketPart,
+  buildRaidBossResultData: emptyPacketPart, buildBattleGameRecordData: emptyPacketPart,
+  buildStagePlayData: emptyPacketPart, buildShadowGameResultData: emptyPacketPart,
+  buildFierceResultData: emptyPacketPart, buildItemMiscData: emptyPacketPart,
+  writeBoolList: (values) => Buffer.concat([codec.writeVarInt(values.length), ...values.map(codec.writeBool)]),
+  buildSerializedRewardData: (reward) => { assert.equal(JSON.stringify(reward), JSON.stringify(rewardModule.createEmptyReward())); return codec.buildRewardData(reward); },
+  buildEmptyRewardData: () => codec.buildRewardData(rewardModule.createEmptyReward()),
+};
+function listenerFunctions(first, next) {
+  const start = listenerSource.indexOf(`function ${first}(`), end = listenerSource.indexOf(`function ${next}(`, start);
+  assert(start >= 0 && end > start);
+  return listenerSource.slice(start, end);
+}
+vm.createContext(endSandbox);
+vm.runInContext(listenerFunctions("buildDynamicGameEndNotPayload", "buildBattleGameRecordState"), endSandbox);
+vm.runInContext(listenerFunctions("buildDungeonClearData", "trackStageClearMissionProgress"), endSandbox);
+
+function actualGameEnd(user, prepared, win) {
+  const replay = { dynamicGame: { ...prepared, diveDeckIndex: prepared.deckIndex,
+    stageID: prepared.dungeonID, dungeonID: prepared.dungeonID, gameType: 5, miscMode: "dive" }, battleState: { win, gameTime: 30 } };
+  actualDiveResult = null;
+  const payload = endSandbox.buildDynamicGameEndNotPayload(replay, { user, win });
+  assert(payload && actualDiveResult, "actual listener must settle a valid Dive result");
+  const dungeonClearDataPresent = Boolean(payload[3]);
+  assert.equal(Boolean(payload[0]), win);
+  assert.equal(dungeonClearDataPresent, win, "native GAME_END floor rebuilding requires a dungeon clear object on every Dive win");
+  return { result: actualDiveResult, win, dungeonClearDataPresent };
+}
 
 function nativeFixture(name, dive, expectedNextSet, expectedBattleButton, moves) {
   if (dive.player.base.state === 4) moves = moves.map((move) => ({ ...move, error: 322 }));
@@ -513,6 +564,73 @@ for (const templet of diveRows) {
 }
 console.log(`Dive data audit passed: ${diveRows.length} exploration floors, ${auditedNodes} nodes, calibrated enemy levels, terminal bosses, hard sectors, and squad-leader assists.`);
 
+const modernPool = require("../gameplay-jsons/generated/dive-dungeon-pool.json");
+for (const routeKind of ["three-elites-lane-2", "repair-supply-artifact-lane-1"]) {
+  const sequenceUser = { userUid: routeKind === "three-elites-lane-2" ? "40" : "41", inventory: {}, army: {} };
+  request(sequenceUser, 1206, [writeSignedVarInt(0), writeSignedVarInt(1060), writeIntList([0, 1]), writeBool(false)]);
+  const active = sequenceUser.worldMap.dive.active;
+  const lane = routeKind === "three-elites-lane-2" ? 2 : 1;
+  const hardPool = Object.entries(modernPool.divesByNumber[6].dungeonPools.byCategory)
+    .filter(([category]) => category.endsWith("_HARD")).flatMap(([, ids]) => ids);
+  assert(hardPool.length > 0);
+  for (let row = 0; row < 3; row++) {
+    active.floor.slotSets[row].slots[lane] = routeKind === "three-elites-lane-2"
+      ? { sectorType: 5, eventType: 1, eventValue: hardPool[row % hardPool.length] }
+      : { sectorType: 10, eventType: [6, 7, 19][row], eventValue: 0 };
+  }
+  active.player.squads[0].curHp = 45000;
+  active.player.squads[0].supply = 1;
+  const initial = JSON.parse(JSON.stringify(active));
+  const initialRows = JSON.parse(JSON.stringify(active.floor.slotSets));
+  const packets = [];
+  const snapshot = () => JSON.parse(JSON.stringify(sequenceUser.worldMap.dive.active));
+  const assertReadsDoNotChangeRows = () => {
+    const before = JSON.stringify(sequenceUser.worldMap.dive.active);
+    worldMap.buildActiveDiveGameData(sequenceUser, { now });
+    const changed = worldMap.repairActiveDiveSupply(sequenceUser, { now });
+    assert.equal(changed, false);
+    assert.equal(JSON.stringify(sequenceUser.worldMap.dive.active), before, "normalization must not redraw an existing route");
+  };
+  const assertUnvisitedRows = (current) => {
+    assert.deepEqual(current.floor.slotSets.slice(current.player.base.distance > 0 ? 1 : 0),
+      initialRows.slice(current.player.base.distance), "every unvisited column stays unchanged after each packet");
+  };
+  const chooseArtifact = () => {
+    const current = sequenceUser.worldMap.dive.active;
+    if (current.player.base.state !== 4) return;
+    const before = JSON.stringify(current.floor);
+    const ack = request(sequenceUser, 1215, [writeSignedVarInt(current.player.base.reservedArtifacts[0])]);
+    const sync = decodeDiveSync(ack.payload);
+    const expected = snapshot();
+    assert.equal(JSON.stringify(expected.floor), before, "1216 copies the artifact selection without rebuilding");
+    assertUnvisitedRows(expected);
+    packets.push({ packetId: 1216, sync, expected });
+    assertReadsDoNotChangeRows();
+  };
+  for (let node = 0; node < 4; node++) {
+    assertReadsDoNotChangeRows();
+    const ack = request(sequenceUser, 1208, [writeSignedVarInt(node === 3 ? 0 : lane)]);
+    const moveSync = decodeDiveSync(ack.payload);
+    const afterMove = snapshot();
+    assertUnvisitedRows(afterMove);
+    packets.push({ packetId: 1209, sync: moveSync, expected: afterMove });
+    if (afterMove.player.base.state === 1) {
+      const prepared = worldMap.prepareDiveGameLoad(sequenceUser, { diveStageID: 1060, selectDeckIndex: 0 }, { now });
+      const ended = actualGameEnd(sequenceUser, prepared, true);
+      const expected = JSON.parse(JSON.stringify(ended.result.dive));
+      assertUnvisitedRows(expected);
+      packets.push({ packetId: 811, win: ended.win, dungeonClearDataPresent: ended.dungeonClearDataPresent,
+        sync: ended.result.syncData, expected });
+      assert.equal(ended.result.cleared, node === 3);
+    }
+    if (node < 3) chooseArtifact();
+  }
+  assert.equal(sequenceUser.worldMap.dive.active, null);
+  nativeFixtures.push({ name: `stepwise-${routeKind}`, dive: initial, expectedNextSet: 0,
+    expectedBattleButton: false, moves: [{ slot: lane, error: 0 }], packetSequence: packets,
+    replayWithoutDungeonClearData: routeKind === "three-elites-lane-2" });
+}
+
 const fixtureOutputIndex = process.argv.indexOf("--native-fixtures");
 if (fixtureOutputIndex >= 0) {
   const output = process.argv[fixtureOutputIndex + 1];
@@ -525,6 +643,9 @@ if (fixtureOutputIndex >= 0) {
       nativeFixtures.find((fixture) => fixture.name === completedName).dive.floor;
     nativeFixtures.find((fixture) => fixture.name === pendingName).afterWin =
       nativeFixtures.find((fixture) => fixture.name === completedName).dive;
+  }
+  for (const fixture of nativeFixtures) {
+    if (fixture.afterWin) fixture.gameEndDungeonClearDataPresent = true;
   }
   require("node:fs").writeFileSync(output, JSON.stringify(nativeFixtures, null, 2));
 }

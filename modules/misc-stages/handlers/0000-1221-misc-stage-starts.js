@@ -28,6 +28,12 @@ module.exports = [
     packetId: 844,
     name: "FIERCE_DATA_REQ",
     handle(ctx, socket, packet) {
+      const seasonId = Number(ctx.getCurrentFierceSeasonId()) || 0;
+      if (socket.session && socket.session.fierceSeasonId !== seasonId && seasonId > 0) {
+        // Initialize the native manager before its boss list, including reconnects.
+        ctx.sendServerGamePacket(socket, 854, ctx.buildFierceSeasonNotPayload(), "fierce-season-refresh");
+        socket.session.fierceSeasonId = seasonId;
+      }
       ctx.sendGameResponse(socket, packet, FIERCE_DATA_ACK, ctx.buildFierceDataAckPayload(socket.session && socket.session.user), "fierce-data");
       return true;
     },

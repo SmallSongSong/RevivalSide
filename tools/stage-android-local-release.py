@@ -189,6 +189,6 @@ if __name__ == "__main__":
     parser.add_argument("--upstream-apk", type=Path, required=True)
     parser.add_argument("--combat-host-publish", type=Path, required=True)
     parser.add_argument("--native-source-ref", required=True)
-    parser.add_argument("--version", default="0.4.2a")
+    parser.add_argument("--version", default="0.4.3a")
     parser.add_argument("--report", type=Path, default=ROOT / "exports/android-local-build.json")
     stage(parser.parse_args())

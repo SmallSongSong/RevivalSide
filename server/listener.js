@@ -100,9 +100,13 @@ const {
 } = require("../modules/packet-codec");
 const { getEquipItems, getMoldItems, getCraftSlots } = require("../modules/equipment");
 const localPvp = require("../modules/local-pvp");
+const fierceRecords = require("../modules/misc-stages/fierce-result");
 const {
   buildPrivateGuildData: buildPersistedPrivateGuildData,
   buildGuildSimpleData: buildPersistedGuildSimpleData,
+  buildGuildSeasonIntervals,
+  completeGuildBattle,
+  cancelGuildBattle,
 } = require("../modules/guild");
 const {
   ensureAccountProgress,
@@ -362,7 +366,7 @@ const FIERCE_ROTATION_ANCHOR_ISO = process.env.CS_FIERCE_ROTATION_ANCHOR || "202
 const FIERCE_ROTATION_CYCLE_DAYS = Math.max(1, Number(process.env.CS_FIERCE_ROTATION_CYCLE_DAYS || 14) || 14);
 const FIERCE_ROTATION_GAME_DAYS = Math.min(
   FIERCE_ROTATION_CYCLE_DAYS,
-  Math.max(1, Number(process.env.CS_FIERCE_ROTATION_GAME_DAYS || 7) || 7)
+  Math.max(1, Number(process.env.CS_FIERCE_ROTATION_GAME_DAYS || FIERCE_ROTATION_CYCLE_DAYS) || FIERCE_ROTATION_CYCLE_DAYS)
 );
 const SEND_FIERCE_SEASON_BOOTSTRAP = envFlagDefault(
   true,
@@ -705,6 +709,7 @@ function startTcpServer() {
 
     socket.on("end", () => console.log("[*] Client ended socket"));
     socket.on("close", (hadError) => {
+      cancelGuildBattle(createPacketContext(), socket.session && socket.session.user, socket.session && socket.session.gameReplay && socket.session.gameReplay.dynamicGame);
       stopGameSyncTimers(socket);
       console.log(`[-] Client disconnected hadError=${hadError}`);
     });
@@ -2789,13 +2794,42 @@ function sendManagedOrImmediatePackets(socket, packets) {
 
 function sendManagedOrImmediatePacket(socket, packetId, payload, label, meta = {}) {
   const replay = socket && socket.session && socket.session.gameReplay;
+  const guildToken = replay && replay.dynamicGame && replay.dynamicGame.guildBattleToken;
+  if (packetId === GAME_END_NOT && guildToken && replay.guildEndTokenSent === guildToken) {
+    sendGuildBattleResultPackets(socket);
+    return true;
+  }
   if ((packetId === GAME_END_NOT || packetId === 3906) && replay && replay.dynamicGame && replay.dynamicGame.miscMode === "defence") {
     return sendDefenceGameEnd(socket, { meta });
   }
   if (packetId === GAME_END_NOT && localPvp.isLocalPvpReplay(socket.session && socket.session.gameReplay)) {
     return sendLocalPvpGameEnd(socket, { meta });
   }
-  sendServerGamePacket(socket, packetId, normalizeManagedCombatPayload(socket, packetId, payload, label, meta), label);
+  const normalizedPayload = normalizeManagedCombatPayload(socket, packetId, payload, label, meta);
+  if (!normalizedPayload) return false;
+  const sent = sendServerGamePacket(socket, packetId, normalizedPayload, label);
+  if (sent === false) return false;
+  if (packetId === GAME_END_NOT) {
+    if (guildToken) replay.guildEndTokenSent = guildToken;
+    sendGuildBattleResultPackets(socket);
+  }
+}
+
+function sendGuildBattleResultPackets(socket) {
+  const replay = socket && socket.session && socket.session.gameReplay;
+  const result = replay && replay.guildBattleResult;
+  const token = replay && replay.dynamicGame && replay.dynamicGame.guildBattleToken;
+  if (!result || !token || result.token !== token || replay.guildResultNoticeTokenSent === token) return false;
+  let progress = replay.guildResultNoticeProgress;
+  if (!progress || progress.token !== token) progress = replay.guildResultNoticeProgress = { token, index: 0 };
+  const packets = result.packets || [];
+  while (progress.index < packets.length) {
+    const packet = packets[progress.index];
+    if (sendServerGamePacket(socket, packet.packetId, packet.payload, packet.label) === false) return false;
+    progress.index += 1;
+  }
+  replay.guildResultNoticeTokenSent = token;
+  return true;
 }
 
 function sendLocalPvpGameEnd(socket, options = {}) {
@@ -2811,8 +2845,11 @@ function sendLocalPvpGameEnd(socket, options = {}) {
     ...(extractManagedBattlePlayTime(meta) > 0 ? { managedBattlePlayTime: extractManagedBattlePlayTime(meta) } : {}),
   };
   const playTime = getBattleEndPlayTime(battleState, override);
+  const win = options.giveup === true ? false : (typeof managedWin === "boolean" ? managedWin : isBattleWin(battleState));
+  const draw = options.giveup !== true && meta.battleWinTeam === 6; // NTT_DRAW
   const payload = localPvp.buildGameEndPayload(socket, {
-    win: options.giveup === true ? false : (typeof managedWin === "boolean" ? managedWin : isBattleWin(battleState)),
+    win,
+    result: draw ? 2 : win ? 0 : 1,
     gameEndTime: playTime,
     gameRecordPayload: buildBattleGameRecordData(replay, buildBattleGameRecordState(battleState, override), { playTime }),
     now: getServerNowDate(),
@@ -2821,7 +2858,7 @@ function sendLocalPvpGameEnd(socket, options = {}) {
   const user = socket.session.user;
   const now = getServerNowDate();
   let missionsChanged = false;
-  if (!match.simulationGame && !match.missionTracked) {
+  if (match.progressionEligible && !match.missionTracked) {
     missionsChanged = trackMissionEvent(user, "PVP_PLAY_ASYNC", 1, { now });
     match.missionTracked = true;
     if (missionsChanged) refreshMissionProgress(user, { now, eventDateKey: getServerEventDateKey(), conditions: ["PVP_PLAY_ASYNC"] });
@@ -2906,6 +2943,7 @@ function normalizeManagedCombatPayload(socket, packetId, payload, label, meta = 
     preferFallbackWin: false,
     ...gameRecordOverride,
   });
+  if (["guild-arena", "guild-boss", "guild-practice"].includes(replay.dynamicGame.miscMode)) return gameEnd;
   return gameEnd || payload;
 }
 
@@ -3000,6 +3038,7 @@ function abandonDynamicBattle(socket, label = "abandon") {
   const replay = socket && socket.session && socket.session.gameReplay;
   if (!replay || !replay.dynamicGame) return false;
   const dynamicGame = replay.dynamicGame;
+  if (dynamicGame.guildBattleToken) cancelGuildBattle(createPacketContext(), socket.session && socket.session.user, dynamicGame);
   const hadActiveTimer = Boolean(replay.dynamicBattleTimer || replay.syntheticSyncTimer || replay.officialCombatReplayTimer);
   stopGameSyncTimers(socket);
   replay.pendingGameStartBootstrap = false;
@@ -3056,6 +3095,8 @@ function startDynamicBattleManager(socket, label) {
       withSocketPacketBurst(socket, () => {
         sendDynamicFinishStateSync(socket, finishedState, "dynamic-finish-state");
         sendServerGamePacket(socket, GAME_END_NOT, payload, "dynamic-game-end");
+        if (replay.dynamicGame.guildBattleToken) replay.guildEndTokenSent = replay.dynamicGame.guildBattleToken;
+        sendGuildBattleResultPackets(socket);
       });
       maybeRecordDynamicBattleClear(socket, finishedState);
       sendRaidStateDataForSocket(socket, "dynamic-raid-end");
@@ -3242,6 +3283,10 @@ function buildDynamicGameLoadPayload(socket, req, stage) {
   replay.gameLoadRequestKey = null;
   replay.phaseBattleResult = null;
   replay.trimBattleResult = null;
+  replay.guildBattleResult = null;
+  replay.guildResultNoticeTokenSent = null;
+  replay.guildResultNoticeProgress = null;
+  replay.guildEndTokenSent = null;
   replay.heartbeatCount = 0;
   replay.battleSim = null;
   replay.tutorialClearRecorded = false;
@@ -3332,6 +3377,7 @@ function sendDynamicGameLoadAck(socket, req, stage) {
   const result = buildDynamicGameLoadPayload(socket, req, stage);
   if (!result) return false;
   const replay = result.replay;
+  if (stage.guildBattleToken && USE_LOCAL_USER_DB) saveUserDb();
   const payload = result.payload;
   replay.gameLoadAckPayload = payload;
   const raidHpChanged = syncRaidCombatHpForReplay(socket, replay, "raid-game-load");
@@ -3795,7 +3841,7 @@ function sendRaidStateDataForSocket(socket, label = "raid-state") {
 function maybeRecordDynamicBattleClear(socket, overrideState = null) {
   const replay = socket && socket.session && socket.session.gameReplay;
   if (!replay || !replay.dynamicGame || replay.dynamicGame.tutorial) return false;
-  if (replay.dynamicBattleClearRecorded || ["local-pvp", "guild-practice", "defence", "explore"].includes(replay.dynamicGame.miscMode)) return false;
+  if (replay.dynamicBattleClearRecorded || ["local-pvp", "guild-arena", "guild-boss", "guild-practice", "defence", "explore", "fierce"].includes(replay.dynamicGame.miscMode)) return false;
   if (replay.phaseBattleResult && !replay.phaseBattleResult.completed) return false;
   if (replay.trimBattleResult && !replay.trimBattleResult.completed) return false;
   if (Number(replay.dynamicGame.diveStageID || 0) > 0 || Number(replay.dynamicGame.gameType || 0) === NGT_DIVE) return false;
@@ -3979,47 +4025,9 @@ function recordMiscStageClearForUser(user, dungeonId, stageId, battleState = {})
     state.shadow.currentPalaceId = palace.currentDungeonId ? palaceId : 0;
     return true;
   }
-  if (miscStage.mode === "fierce") {
-    const bossId = positiveInt(miscStage.fierceBossId);
-    const bossState = ensureFierceBossSeasonState(user, bossId);
-    if (!bossState) return false;
-    const result = buildFierceResultState({
-      dynamicGame: {
-        dungeonID: dungeonId,
-        stageID: stageId,
-        fierceBossId: bossId,
-        miscMode: "fierce",
-      },
-      battleState,
-      user,
-      win: true,
-    });
-    const previousPoint = Math.max(0, Number(bossState.point || 0) || 0);
-    const bestPoint = Math.max(previousPoint, Number(result.bestPoint || result.accquirePoint || 0) || 0);
-    const updated = {
-      ...bossState,
-      bossId,
-      isCleared: true,
-      point: bestPoint,
-      rankNumber: bestPoint > 0 ? 1 : Math.max(0, Number(bossState.rankNumber || 0) || 0),
-      rankPercent: bestPoint > 0 ? 1 : Math.max(0, Number(bossState.rankPercent || 0) || 0),
-      penaltyIds: uniquePositiveIntList(result.penaltyIds || bossState.penaltyIds || []),
-      penaltyPoint: Math.max(0, Number(result.penaltyPoint || bossState.penaltyPoint || 0) || 0),
-      lastAcquirePoint: Math.max(0, Number(result.accquirePoint || 0) || 0),
-      lastRestTime: Math.max(0, Number(result.restTime || 0) || 0),
-      updatedAt: new Date().toISOString(),
-    };
-    const seasonState = ensureFierceSeasonState(user);
-    seasonState.season.bosses[String(bossId)] = updated;
-    seasonState.fierce.bosses[String(bossId)] = updated;
-    const totalPoint = getFierceSeasonTotalPoint(user);
-    seasonState.season.totalPoint = totalPoint;
-    seasonState.season.rankNumber = totalPoint > 0 ? 1 : 0;
-    seasonState.season.rankPercent = totalPoint > 0 ? 1 : 0;
-    seasonState.fierce.rankNumber = seasonState.season.rankNumber;
-    seasonState.fierce.rankPercent = seasonState.season.rankPercent;
-    return true;
-  }
+  // Fierce seasons share dungeon IDs; only the active battle identifies its Boss.
+  if (miscStage.mode === "fierce") return false;
+
   if (miscStage.mode === "trim") {
     state.trim = state.trim && typeof state.trim === "object" ? state.trim : {};
     state.trim.lastClear = {
@@ -4173,6 +4181,7 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
   if (!dynamicGame) return null;
   if (replay.dynamicGameEndPayload) return replay.dynamicGameEndPayload;
   const isPracticeGame = dynamicGame.miscMode === "guild-practice";
+  const isGuildGame = ["guild-arena", "guild-boss", "guild-practice"].includes(dynamicGame.miscMode);
   const isExploreGame = dynamicGame.miscMode === "explore" || Number(dynamicGame.gameType) === NGT_EXPLORE;
   const battleState = override.battleState || replay.battleState || {};
   const requestedDungeonId = Number(override.dungeonID || dynamicGame.dungeonID || 0);
@@ -4237,14 +4246,18 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
   const raidBattleResult = isRaidGame ? maybeRecordRaidBattleResultForReplay(replay, { ...override, battleState }, win) : null;
   const isDiveGame = !isRaidGame && (Number(dynamicGame.diveStageID || 0) > 0 || Number(dynamicGame.gameType || 0) === NGT_DIVE);
   const diveBattleResult = isDiveGame ? worldMap.completeDiveBattle(override.user, dynamicGame, battleState, { win, now: dateTimeBinaryNow() }) : null;
+  if (isDiveGame && !diveBattleResult) return null;
   if (isExploreGame && !explore.completeBattle(override.user, dynamicGame, battleState, { win })) return null;
   const exploreParts = isExploreGame ? explore.serializeGameEndParts(override.user) : null;
-  const stageLoot = !isRaidGame && !isDiveGame && !isPracticeGame && !isExploreGame && win && stageCompleted ? getOrGrantStageClearLoot(replay, override.user, dungeonId, stageId, { save: false }) : null;
+  const guildBattleResult = isGuildGame ? completeGuildBattle(createPacketContext(), override.user, dynamicGame, { ...battleState, ...missionBattleState, ...missionResults }, { win, giveup: Boolean(override.giveup) }) : null;
+  if (isGuildGame && !guildBattleResult) return null;
+  if (guildBattleResult) replay.guildBattleResult = { ...guildBattleResult, token: dynamicGame.guildBattleToken };
+  const stageLoot = !isRaidGame && !isDiveGame && !isGuildGame && !isExploreGame && win && stageCompleted ? getOrGrantStageClearLoot(replay, override.user, dungeonId, stageId, { save: false }) : null;
   const costItems = isRaidGame
     ? (raidBattleResult && raidBattleResult.costItems) || []
     : isDiveGame
       ? []
-      : isPracticeGame
+      : isGuildGame
         ? []
       : isExploreGame
         ? []
@@ -4255,7 +4268,7 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
       : trimResult && trimResult.index > 0
         ? []
       : spendStageReqItemCostForReplay(replay, override.user, stageId);
-  const episodeCompleteData = !isRaidGame && !isDiveGame && !isPracticeGame && !isExploreGame && win && stageCompleted ? buildMainStoryEpisodeCompleteDataForStage(override.user, stageId) : null;
+  const episodeCompleteData = !isRaidGame && !isDiveGame && !isGuildGame && !isExploreGame && win && stageCompleted ? buildMainStoryEpisodeCompleteDataForStage(override.user, stageId) : null;
   const fierceResult = buildFierceResultState({
     dynamicGame,
     battleState: missionBattleState,
@@ -4264,19 +4277,29 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
     fiercePoint: override.fiercePoint ?? override.managedFiercePoint,
     fiercePenaltyPoint: override.fiercePenaltyPoint ?? override.managedFiercePenaltyPoint,
   });
+  const fierceRecord = override.user && (dynamicGame.miscMode === "fierce" || Number(dynamicGame.gameType) === NGT_FIERCE)
+    ? fierceRecords.recordFierceResult(replay, ensureFierceSeasonState(override.user), fierceResult,
+        { win: win && !override.giveup, bossRows: getFierceSeasonBossRows() })
+    : null;
+  if (fierceRecord && fierceRecord.boss) {
+    fierceResult.bestPoint = fierceRecord.boss.point;
+    fierceResult.bestDeck = fierceRecord.boss.bestDeck;
+  }
   const payload = Buffer.concat([
     writeBool(win), // win
     writeBool(Boolean(override.giveup || false)), // giveup
     writeBool(Boolean(override.restart || false)), // restart
-    !isRaidGame && !isDiveGame && !isPracticeGame && !isExploreGame && dungeonId
+    dungeonId && (isDiveGame ? win && Boolean(diveBattleResult) : isGuildGame ? dynamicGame.miscMode === "guild-arena" : !isRaidGame && !isExploreGame)
       ? writeNullableObject(
           buildDungeonClearData(dungeonId, {
             stageId,
             win,
             battleState: missionBattleState,
             ...missionResults,
-            reward: stageLoot && stageLoot.reward,
-            unitExp: stageLoot ? stageLoot.unitExp : undefined,
+            // The client gates Dive floor rebuilding on dungeonClearData.
+            // Dive rewards remain exclusively in diveSyncData.
+            reward: isDiveGame || isGuildGame ? createEmptyReward() : stageLoot && stageLoot.reward,
+            unitExp: isDiveGame || isGuildGame ? 0 : stageLoot ? stageLoot.unitExp : undefined,
           })
         )
       : writeNullObject(),
@@ -4293,11 +4316,11 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
     writeNullObject(), // warfareSyncData
     writeNullObject(), // pvpResultData
     diveBattleResult ? writeNullableObject(worldMap.buildDiveSyncData(diveBattleResult.syncData)) : writeNullObject(), // diveSyncData
-    writeNullableObject(buildRaidBossResultData(raidBattleResult && raidBattleResult.bossResult)), // raidBossResultData
+    writeNullableObject(buildRaidBossResultData(guildBattleResult && guildBattleResult.raidBossResult || raidBattleResult && raidBattleResult.bossResult)), // raidBossResultData
     writeNullableObject(buildBattleGameRecordData(replay, gameRecordState, { playTime, fiercePoint: fierceResult.accquirePoint })), // gameRecord
     writeObjectList([]), // updatedUnits
     writeObjectList(costItems.map((item) => writeNullableObject(buildItemMiscData(item)))), // costItemDataList
-    stageId && !isPracticeGame && !isExploreGame ? writeNullableObject(buildStagePlayData(stageId, { ...missionBattleState, gameTime: phaseResult ? phaseResult.totalPlayTime : playTime })) : writeNullObject(),
+    stageId && !isGuildGame && !isExploreGame ? writeNullableObject(buildStagePlayData(stageId, { ...missionBattleState, gameTime: phaseResult ? phaseResult.totalPlayTime : playTime })) : writeNullObject(),
     writeNullableObject(buildShadowGameResultData(dynamicGame, missionBattleState, { user: override.user })), // shadowGameResult
     writeNullableObject(buildFierceResultData(fierceResult)), // fierceResultData
     phaseResult && phaseResult.next
@@ -4323,6 +4346,7 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
   if (phaseResult && !phaseResult.completed && USE_LOCAL_USER_DB) saveUserDb();
   if (trimResult && !trimResult.completed && USE_LOCAL_USER_DB) saveUserDb();
   if (diveBattleResult && USE_LOCAL_USER_DB) saveUserDb();
+  if (fierceRecord && fierceRecord.changed && USE_LOCAL_USER_DB) saveUserDb();
   if (dynamicGame.miscMode === "shadow" && USE_LOCAL_USER_DB) saveUserDb();
   if (isExploreGame && USE_LOCAL_USER_DB) saveUserDb();
   return payload;
@@ -4773,12 +4797,13 @@ function buildFierceResultState(options = {}) {
 
 function buildFierceResultData(result = null) {
   const data = result && typeof result === "object" ? result : {};
+  const bestDeck = fierceRecords.buildFierceEventDeckData(data.bestDeck);
   return Buffer.concat([
     writeSignedVarInt(Math.max(0, Number(data.hpPercent || 0) || 0)), // hpPercent
     writeFloatLE(Math.max(0, Number(data.restTime || 0) || 0)), // restTime
     writeSignedVarInt(Math.max(0, Number(data.accquirePoint || 0) || 0)), // accquirePoint
     writeSignedVarInt(Math.max(0, Number(data.bestPoint || 0) || 0)), // bestPoint
-    writeNullObject(), // bestDeck
+    bestDeck ? writeNullableObject(bestDeck) : writeNullObject(), // bestDeck
   ]);
 }
 
@@ -8144,6 +8169,7 @@ function buildFierceDataAckPayload(user = null) {
       rankNumber: Math.max(0, Number(saved.rankNumber || (Number(saved.point || 0) > 0 ? 1 : 0)) || 0),
       rankPercent: Math.max(0, Number(saved.rankPercent || (Number(saved.point || 0) > 0 ? 1 : 0)) || 0),
       isCleared: Boolean(saved.isCleared),
+      bestDeck: saved.bestDeck,
     });
   });
   return Buffer.concat([
@@ -8161,12 +8187,13 @@ function buildFierceSeasonNotPayload(now = getServerNowDate()) {
 }
 
 function buildFierceBossData(data = {}) {
+  const bestDeck = fierceRecords.buildFierceEventDeckData(data.bestDeck);
   return Buffer.concat([
     writeSignedVarInt(positiveInt(data.bossId)),
     writeSignedVarInt(Math.max(0, Number(data.point || 0) || 0)),
     writeSignedVarInt(Math.max(0, Number(data.rankNumber || 0) || 0)),
     writeSignedVarInt(Math.max(0, Number(data.rankPercent || 0) || 0)),
-    writeNullObject(),
+    bestDeck ? writeNullableObject(bestDeck) : writeNullObject(),
     writeBool(Boolean(data.isCleared)),
   ]);
 }
@@ -8220,7 +8247,7 @@ function buildFierceProfileState(user = null) {
     }
   }
   const bossId = positiveInt(bestRow && bestRow.FierceBossID);
-  const penaltyIds = uniquePositiveIntList(bestSaved.penaltyIds);
+  const penaltyIds = uniquePositiveIntList(bestSaved.bestPenaltyIds || bestSaved.penaltyIds);
   return {
     fierceBossGroupId: positiveInt(bestRow && bestRow.FierceBossGroupID),
     fierceBossId: bossId,
@@ -8228,14 +8255,16 @@ function buildFierceProfileState(user = null) {
     totalPoint: Math.max(0, Number(bestSaved.point || 0) || 0),
     penaltyPoint: Math.max(0, Number(bestSaved.penaltyPoint || 0) || 0),
     penaltyIds,
+    bestDeck: bestSaved.bestDeck,
   };
 }
 
 function buildFierceProfileData(profile = {}, user = null) {
+  const bestDeck = fierceRecords.buildFierceProfileDeckData(profile.bestDeck);
   return Buffer.concat([
     writeSignedVarInt(positiveInt(profile.fierceBossGroupId)),
     writeSignedVarInt(positiveInt(profile.fierceBossId)),
-    writeNullObject(), // profileDeck
+    bestDeck ? writeNullableObject(bestDeck) : writeNullObject(), // profileDeck
     writeSignedVarInt(positiveInt(profile.operationPower)),
     writeSignedVarInt(Math.max(0, Number(profile.totalPoint || 0) || 0)),
     writeSignedVarInt(Math.max(0, Number(profile.penaltyPoint || 0) || 0)),
@@ -8415,6 +8444,7 @@ function buildFierceBossDataListForUser(user = null, seasonRow = null) {
       rankNumber: Math.max(0, Number(saved.rankNumber || (point > 0 ? 1 : 0)) || 0),
       rankPercent: Math.max(0, Number(saved.rankPercent || (point > 0 ? 1 : 0)) || 0),
       isCleared: Boolean(saved.isCleared),
+      bestDeck: saved.bestDeck,
     });
   });
 }
@@ -9179,6 +9209,12 @@ function buildJoinLobbyIntervalDataList(user) {
     const strKey = readIntervalDataStrKey(payload) || `__attendance_${byStrKey.size}`;
     byStrKey.set(strKey, payload);
   }
+  // Guild session calculations depend on the persisted local season window.
+  for (const interval of buildGuildSeasonIntervals(createPacketContext(), user)) {
+    const payload = buildIntervalData(interval);
+    const strKey = readIntervalDataStrKey(payload);
+    if (strKey) byStrKey.set(strKey, payload);
+  }
   return Array.from(byStrKey.values());
 }
 
@@ -9395,7 +9431,8 @@ function buildJoinLobbyAckPayload(user) {
     eventShopMergeIntervalStrKeys,
     fierceIntervalStrKeys,
     activeEventMissionIntervalStrKeys,
-    activeEventIntervalStrKeys
+    activeEventIntervalStrKeys,
+    activeIntervalStrKeys.filter((key) => key.startsWith("DATE_GUILD_DUNGEON_"))
   );
   const mergeExplicitIntervalsIntoOfficial = preserveOfficialContractData && explicitMergeIntervalStrKeys.length > 0;
   const inactiveEventIntervalStrKeys = getInactiveEventIntervalStrKeys(localIntervalData);

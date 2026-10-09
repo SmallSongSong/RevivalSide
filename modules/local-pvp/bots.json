@@ -1,18 +1,32 @@
 [
   {
-    "key": "evolved",
-    "name": "BOT · Evolved-001",
-    "friendCode": "900000002",
-    "shipUnitId": 26036,
-    "unitIds": [1190, 1012, 1187, 1188, 1068, 1219, 1061, 2042],
-    "sources": ["https://www.prydwen.gg/counter-side/guides/evolved-playbook/", "https://docs.google.com/document/d/1j5DyHPH3IAMIWkmhrgetf5ClJG1GNcDNGPhNUHiv3oU/edit"]
+    "key": "rosaria-air", "name": "BOT · Rosaria 120", "friendCode": "900000002", "shipUnitId": 26024, "operatorId": 30201,
+    "unitIds": [1239, 1256, 1135, 1246, 2042, 2091, 2158, 1206],
+    "sources": ["https://www.prydwen.gg/counter-side/characters/awakened-rosaria", "https://www.prydwen.gg/counter-side/characters/awakened-shin-jia", "https://www.prydwen.gg/counter-side/guides/pvp-gearing"]
   },
   {
-    "key": "siege",
-    "name": "BOT · Goliath Siege",
-    "friendCode": "900000003",
-    "shipUnitId": 26036,
-    "unitIds": [1210, 1082, 1079, 1154, 2118, 1205, 1196, 1067],
-    "sources": ["https://www.prydwen.gg/counter-side/guides/siege-playbook/", "https://docs.google.com/document/d/1SJJyj-8KrzUq0Sdy8mW2P1y2I15S4OQRJqlmBaxMWIQ/edit"]
+    "key": "regina-control", "name": "BOT · Regina 120", "friendCode": "900000003", "shipUnitId": 26026, "operatorId": 31901,
+    "unitIds": [1202, 1235, 1242, 1206, 2042, 1205, 2158, 2091],
+    "sources": ["https://www.prydwen.gg/counter-side/characters/awakened-regina", "https://www.prydwen.gg/counter-side/characters/awakened-jake", "https://www.prydwen.gg/counter-side/guides/pvp-gearing"]
+  },
+  {
+    "key": "curian-soldiers", "name": "BOT · Curian 120", "friendCode": "900000004", "shipUnitId": 26041, "operatorId": 31901,
+    "unitIds": [1244, 1221, 1215, 1278, 2136, 2148, 1065, 1096],
+    "sources": ["https://www.prydwen.gg/counter-side/characters/curian", "https://www.prydwen.gg/counter-side/ships/matador", "https://www.prydwen.gg/counter-side/guides/pvp-gearing"]
+  },
+  {
+    "key": "shiyoon-counter", "name": "BOT · Shiyoon 120", "friendCode": "900000005", "shipUnitId": 26006, "operatorId": 31901,
+    "unitIds": [1194, 1202, 1176, 1206, 2042, 1205, 1135, 2158],
+    "sources": ["https://www.prydwen.gg/counter-side/characters/awakened-joo-shiyoon", "https://www.prydwen.gg/counter-side/characters/ministra", "https://www.prydwen.gg/counter-side/guides/pvp-gearing"]
+  },
+  {
+    "key": "hilde-wall", "name": "BOT · Hilde Wall 120", "friendCode": "900000006", "shipUnitId": 26006, "operatorId": 30201,
+    "unitIds": [1150, 1275, 1256, 1239, 1246, 1206, 1135, 2042],
+    "sources": ["https://www.prydwen.gg/counter-side/characters/awakened-hilde", "https://www.prydwen.gg/counter-side/characters/awakened-jake", "https://www.prydwen.gg/counter-side/characters/awakened-rosaria", "https://www.prydwen.gg/counter-side/guides/pvp-gearing"]
+  },
+  {
+    "key": "ministra-debuff", "name": "BOT · Ministra 120", "friendCode": "900000007", "shipUnitId": 26024, "operatorId": 31901,
+    "unitIds": [1256, 1176, 1242, 1253, 1205, 2091, 2042, 1135],
+    "sources": ["https://www.prydwen.gg/counter-side/characters/ministra", "https://www.prydwen.gg/counter-side/characters/awakened-shin-jia", "https://www.prydwen.gg/counter-side/guides/pvp-gearing"]
   }
 ]

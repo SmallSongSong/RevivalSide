@@ -21,6 +21,15 @@ public sealed class GameLoadReq
 
 public sealed class StageData
 {
+    public string GuildUid { get; set; } = "0";
+    public int GuildSeasonId { get; set; }
+    public string GuildWindowId { get; set; } = "";
+    public int GuildSessionId { get; set; }
+    public string GuildBattleToken { get; set; } = "";
+    public int GuildArenaIndex { get; set; }
+    public int GuildBossStageId { get; set; }
+    public double GuildBossInitHp { get; set; }
+    public double GuildBossMaxHp { get; set; }
     public double? ShipInitHp { get; set; }
     public int DiveStageID { get; set; }
     public int DiveLevel { get; set; }
@@ -145,6 +154,15 @@ public sealed class PlayerUnitData
 
 public sealed class DynamicGameState
 {
+    public string GuildUid { get; set; } = "0";
+    public int GuildSeasonId { get; set; }
+    public string GuildWindowId { get; set; } = "";
+    public int GuildSessionId { get; set; }
+    public string GuildBattleToken { get; set; } = "";
+    public int GuildArenaIndex { get; set; }
+    public int GuildBossStageId { get; set; }
+    public double GuildBossInitHp { get; set; }
+    public double GuildBossMaxHp { get; set; }
     public string LocalPvpStartPayloadBase64 { get; set; } = "";
     public int LocalPvpGameType { get; set; }
     public double? ShipInitHp { get; set; }

@@ -237,9 +237,14 @@ function buildDeckIndexData(deckIndex) {
   ]);
 }
 
+function getDeckSlotCount(deckType, unitUids) {
+  if (Number(deckType) !== 4) return 8;
+  return Array.isArray(unitUids) && unitUids.length > 16 ? 24 : 16;
+}
+
 function buildDeckData(deck) {
   const data = deck || {};
-  const slotCount = Number(data.deckType || 0) === 4 ? 16 : 8;
+  const slotCount = getDeckSlotCount(data.deckType, data.unitUids || data.m_listDeckUnitUID);
   return Buffer.concat([
     writeString(data.name != null ? data.name : data.deckName || ""),
     writeSignedVarLong(toBigInt(data.shipUid != null ? data.shipUid : data.m_ShipUID || 0)),
@@ -756,6 +761,7 @@ module.exports = {
   buildPotentialOptionCandidateData,
   buildEquipPresetData,
   buildDeckIndexData,
+  getDeckSlotCount,
   buildDeckData,
   buildEquipProfileInfoData,
   buildItemMiscData,

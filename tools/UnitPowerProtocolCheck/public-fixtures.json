@@ -1,0 +1,264 @@
+{
+  "units": [
+    {
+      "unitUid": "100",
+      "unitId": 1006,
+      "level": 100,
+      "limitBreakLevel": 3,
+      "tacticLevel": 0,
+      "reactorLevel": 0,
+      "skillLevels": [
+        1,
+        1,
+        1,
+        0,
+        0
+      ],
+      "equipItemUids": [
+        "0",
+        "0",
+        "0",
+        "0"
+      ]
+    },
+    {
+      "unitUid": "101",
+      "unitId": 2006,
+      "level": 100,
+      "limitBreakLevel": 3,
+      "tacticLevel": 0,
+      "reactorLevel": 0,
+      "skillLevels": [
+        1,
+        1,
+        1,
+        0,
+        0
+      ],
+      "equipItemUids": [
+        "0",
+        "0",
+        "0",
+        "0"
+      ]
+    },
+    {
+      "unitUid": "102",
+      "unitId": 1006,
+      "level": 100,
+      "limitBreakLevel": 3,
+      "tacticLevel": 0,
+      "reactorLevel": 0,
+      "skillLevels": [
+        1,
+        1,
+        1,
+        0,
+        0
+      ],
+      "equipItemUids": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ]
+    },
+    {
+      "unitUid": "103",
+      "unitId": 1006,
+      "level": 100,
+      "limitBreakLevel": 3,
+      "tacticLevel": 0,
+      "reactorLevel": 0,
+      "skillLevels": [
+        1,
+        1,
+        1,
+        0,
+        0
+      ],
+      "equipItemUids": [
+        "1",
+        "2",
+        "0",
+        "0"
+      ]
+    },
+    {
+      "unitUid": "104",
+      "unitId": 1006,
+      "level": 100,
+      "limitBreakLevel": 3,
+      "tacticLevel": 0,
+      "reactorLevel": 0,
+      "skillLevels": [
+        1,
+        1,
+        1,
+        0,
+        0
+      ],
+      "equipItemUids": [
+        "5",
+        "6",
+        "0",
+        "0"
+      ]
+    },
+    {
+      "unitUid": "105",
+      "unitId": 1006,
+      "level": 100,
+      "limitBreakLevel": 3,
+      "tacticLevel": 0,
+      "reactorLevel": 0,
+      "skillLevels": [
+        1,
+        1,
+        1,
+        0,
+        0
+      ],
+      "equipItemUids": [
+        "7",
+        "0",
+        "0",
+        "0"
+      ]
+    },
+    {
+      "unitUid": "106",
+      "unitId": 1006,
+      "level": 100,
+      "limitBreakLevel": 3,
+      "tacticLevel": 0,
+      "reactorLevel": 0,
+      "skillLevels": [
+        1,
+        1,
+        1,
+        0,
+        0
+      ],
+      "equipItemUids": [
+        "8",
+        "0",
+        "0",
+        "0"
+      ]
+    }
+  ],
+  "equipItems": [
+    {
+      "equipUid": "1",
+      "itemEquipId": 1561141,
+      "enchantLevel": 10,
+      "precision": 100,
+      "precision2": 100,
+      "setOptionId": 241900,
+      "potentialOptions": []
+    },
+    {
+      "equipUid": "2",
+      "itemEquipId": 1561241,
+      "enchantLevel": 10,
+      "precision": 100,
+      "precision2": 100,
+      "setOptionId": 241900,
+      "potentialOptions": []
+    },
+    {
+      "equipUid": "3",
+      "itemEquipId": 1561341,
+      "enchantLevel": 10,
+      "precision": 100,
+      "precision2": 100,
+      "setOptionId": 241900,
+      "potentialOptions": []
+    },
+    {
+      "equipUid": "4",
+      "itemEquipId": 1561341,
+      "enchantLevel": 10,
+      "precision": 100,
+      "precision2": 100,
+      "setOptionId": 241900,
+      "potentialOptions": []
+    },
+    {
+      "equipUid": "5",
+      "itemEquipId": 1561141,
+      "enchantLevel": 10,
+      "precision": 100,
+      "precision2": 100,
+      "setOptionId": 220800,
+      "potentialOptions": []
+    },
+    {
+      "equipUid": "6",
+      "itemEquipId": 1561241,
+      "enchantLevel": 10,
+      "precision": 100,
+      "precision2": 100,
+      "setOptionId": 220800,
+      "potentialOptions": []
+    },
+    {
+      "equipUid": "7",
+      "itemEquipId": 2461141,
+      "enchantLevel": 10,
+      "precision": 100,
+      "precision2": 100,
+      "setOptionId": 0,
+      "potentialOptions": [
+        {
+          "optionKey": 246114106,
+          "sockets": [
+            {
+              "statValue": 0.018
+            },
+            {
+              "statValue": 0.035
+            },
+            {
+              "statValue": 0.035
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "equipUid": "8",
+      "itemEquipId": 2461141,
+      "enchantLevel": 10,
+      "precision": 100,
+      "precision2": 100,
+      "setOptionId": 0,
+      "potentialOptions": [
+        {
+          "optionKey": 246114106,
+          "sockets": [
+            {
+              "statValue": 0.004
+            },
+            {
+              "statValue": 0.009
+            },
+            {
+              "statValue": 0.009
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "expectedPowers": {
+    "100": 8568,
+    "101": 8616,
+    "102": 17456,
+    "103": 12272,
+    "104": 12642,
+    "105": 10522,
+    "106": 10376
+  }
+}

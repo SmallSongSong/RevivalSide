@@ -3,6 +3,7 @@ const { buildAttendanceNotifyPayload, ensureAttendanceRewardPosts } = require(".
 const { sendCounterPassLobbyNotifications } = require("../modules/event-pass");
 const { buildOfficeGuestListNotData } = require("../modules/office");
 const worldMap = require("../modules/world-map");
+const { buildGuildDataUpdatedNotPayload, cancelGuildBattle } = require("../modules/guild");
 
 const OFFICE_GUEST_LIST_NOT = 3636;
 const FIERCE_DATA_ACK = 845;
@@ -59,6 +60,7 @@ module.exports = {
           "join-lobby-local-progress"
         );
         replay.inGameFlow = true;
+        sendGuildDataBootstrap(ctx, socket, user);
         sendFierceSeasonBootstrap(ctx, socket, user, {
           includeData: false,
           scheduleRefresh: false,
@@ -89,6 +91,7 @@ module.exports = {
           console.log("[JOIN_LOBBY_REQ] using captured lobby ACK; local account overlay disabled");
         }
         ctx.sendCapturedGameThroughPacketId(socket, ctx.constants.JOIN_LOBBY_ACK, "join-lobby");
+        sendGuildDataBootstrap(ctx, socket, user);
         sendFierceSeasonBootstrap(ctx, socket, user, {
           includeData: false,
           scheduleRefresh: false,
@@ -121,6 +124,7 @@ module.exports = {
       "join-lobby-local-progress"
     );
     replay.inGameFlow = true;
+    sendGuildDataBootstrap(ctx, socket, user);
     sendFierceSeasonBootstrap(ctx, socket, user, {
       includeData: false,
       scheduleRefresh: false,
@@ -166,6 +170,7 @@ function sendOfficialTutorialJoinLobby(ctx, socket, replay, joinLobbyPayload, us
     replay.bootLobbyTemplateSent = true;
   }
   ctx.sendServerGamePacket(socket, ctx.constants.JOIN_LOBBY_ACK, joinLobbyPayload, "tutorial-join-lobby-local-progress");
+  sendGuildDataBootstrap(ctx, socket, user);
   sendFierceSeasonBootstrap(ctx, socket, user, {
     includeData: false,
     scheduleRefresh: false,
@@ -185,6 +190,14 @@ function sendCounterPassLobbyBootstrap(ctx, socket) {
 
 function sendOfficeGuestListBootstrap(ctx, socket) {
   ctx.sendServerGamePacket(socket, OFFICE_GUEST_LIST_NOT, buildOfficeGuestListNotData([]), "join-lobby-office-guest-list");
+}
+
+function sendGuildDataBootstrap(ctx, socket, user) {
+  if (!ctx.config.USE_LOCAL_USER_DB || !ctx.userDb) return;
+  const game = socket.session && socket.session.gameReplay && socket.session.gameReplay.dynamicGame;
+  if (!game || !game.guildBattleToken) cancelGuildBattle(ctx, user, null);
+  const payload = buildGuildDataUpdatedNotPayload(ctx, user);
+  if (payload) ctx.sendServerGamePacket(socket, 3416, payload, "join-lobby-guild-data");
 }
 
 function sendJoinLobbyRaidBootstrap(ctx, socket, user) {

@@ -1,4 +1,4 @@
-const { dateTimeBinaryNow, statTypeName, toBigInt } = require("../packet-codec");
+const { dateTimeBinaryNow, statTypeName, toBigInt, getDeckSlotCount } = require("../packet-codec");
 const {
   getUnitTemplet,
   resolveUnitId,
@@ -274,7 +274,7 @@ function buildDeckUnitSlotAssignments(deck, allowedUnitSlots, explicitSlotUnitUi
 
 function resolveDeckIndexForGameLoad(user, req = {}) {
   const index = normalizeDeckIndex(req.selectDeckIndex || 0);
-  if (Number(req.gameType || 0) === 25) return { deckType: DECK_TYPE_RAID, index };
+  if ([17, 25].includes(Number(req.gameType || 0))) return { deckType: DECK_TYPE_RAID, index };
   if (toBigInt(req.raidUID || req.raidUid || 0) > 0n) return { deckType: DECK_TYPE_RAID, index };
   if (Number(req.diveStageID || 0) > 0) return { deckType: DECK_TYPE_DIVE, index };
   if (Number(req.exploreID || 0) > 0) return { deckType: DECK_TYPE_EXPLORE, index };
@@ -571,6 +571,8 @@ function unlockDeck(user, deckType) {
 function setDeckUnit(user, deckIndex, slotIndex, unitUid) {
   const army = ensureArmy(user);
   let deck = ensureDeck(user, deckIndex);
+  if (deck.deckType === DECK_TYPE_RAID && Number.isInteger(Number(slotIndex)) && Number(slotIndex) >= 16 && Number(slotIndex) < 24)
+    deck.unitUids = normalizeFixedArray(deck.unitUids, 24, 0);
   const slot = normalizeSlot(slotIndex, deck.unitUids.length);
   const normalizedUidBig = toBigInt(unitUid);
   const normalizedUid = String(normalizedUidBig);
@@ -1202,7 +1204,7 @@ function sanitizeDeckReferences(army) {
     for (const deck of decks) {
       if (!deck || typeof deck !== "object") continue;
       const seenUnits = new Set();
-      deck.unitUids = normalizeFixedArray(deck.unitUids, Number(deck.deckType || 0) === 4 ? 16 : 8, 0).map((uid) => {
+      deck.unitUids = normalizeFixedArray(deck.unitUids, getDeckSlotCount(deck.deckType, deck.unitUids), 0).map((uid) => {
         const key = String(toBigInt(uid || 0));
         if (key === "0" || !unitUids.has(key) || seenUnits.has(key)) return 0;
         seenUnits.add(key);
@@ -1249,8 +1251,8 @@ function createDefaultDeck(deckType, index) {
 }
 
 function normalizeDeck(deck, deckType, index = 0) {
-  const slotCount = deckType === 4 ? 16 : 8;
   const data = deck && typeof deck === "object" ? deck : {};
+  const slotCount = getDeckSlotCount(deckType, data.unitUids || data.m_listDeckUnitUID);
   return {
     deckType,
     index: Number(data.index != null ? data.index : index) || 0,

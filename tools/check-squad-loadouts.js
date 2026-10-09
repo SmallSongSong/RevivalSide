@@ -42,3 +42,25 @@ assert.equal(ensureDeck(user, { deckType: 8, index: 1 }).shipUid, "201");
 assert.equal(ensureDeck(user, { deckType: 8, index: 1 }).operatorUid, "301");
 
 console.log("Squad loadout checks passed.");
+
+const { buildDeckData, readString, readSignedVarLong } = require("../modules/packet-codec");
+const { buildPlayerDeckForGameLoad } = require("../modules/unit");
+const raid = ensureDeck(user, { deckType: 4, index: 0 });
+assert.equal(raid.unitUids.length, 16, "legacy raid decks remain sixteen slots");
+setDeckUnit(user, { deckType: 4, index: 0 }, 23, "101");
+const extended = ensureDeck(user, { deckType: 4, index: 0 });
+assert.equal(extended.unitUids.length, 24);
+assert.equal(extended.unitUids[23], "101");
+ensureArmy(user);
+assert.equal(ensureDeck(user, { deckType: 4, index: 0 }).unitUids[23], "101", "normalization must retain extended raid slots");
+const payload = buildDeckData(extended);
+let offset = readString(payload, 0).offset;
+offset = readSignedVarLong(payload, offset).offset;
+offset = readSignedVarLong(payload, offset).offset;
+assert.equal(payload[offset], 24, "wire deck list must preserve twenty-four slots");
+const deployment = buildPlayerDeckForGameLoad(user, { gameType: 17, selectDeckIndex: 0 });
+assert.equal(deployment.deckType, 4);
+assert(deployment.units.some(unit => unit.slotIndex === 23 && unit.unitUid === "101"), "formal Guild Boss loads the actual RAID extended selection");
+setDeckUnit(user, { deckType: 4, index: 0 }, 24, "101");
+assert.equal(ensureDeck(user, { deckType: 4, index: 0 }).unitUids.length, 24, "out-of-range edits cannot create more than twenty-four slots");
+console.log("Raid extended loadouts: legacy16, live24, slot23, wire24, GuildBoss17 PASS");

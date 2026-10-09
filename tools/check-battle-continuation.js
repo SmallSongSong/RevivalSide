@@ -33,6 +33,7 @@ let phaseClearPackets = 0;
 let nextState;
 const empty = () => Buffer.alloc(0);
 const sandbox = {
+  NGT_FIERCE: 14, fierceRecords: require("../modules/misc-stages/fierce-result"),
   ...codec, Buffer, console: { log() {} },
   explore,
   NGT_PHASE: 15, NGT_DIVE: 5, NGT_EXPLORE: 29, USE_LOCAL_USER_DB: false,

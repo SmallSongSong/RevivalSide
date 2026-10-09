@@ -80,3 +80,34 @@ for (let index = 0; index < attendance[countOffset]; index += 1) {
 }
 assert.strictEqual(offset, attendance.length, "attendance notification must match the frozen packet schema");
 console.log("[join-lobby-fast-path] PASS cached JOIN, no duplicate saves, and valid attendance notification framing");
+
+// Existing members need both 205 membership and 3416 guild content after login.
+const guild = require("../modules/guild");
+const { setMiscItemBalance } = require("../modules/inventory");
+const member = { userUid: "2", friendCode: "2", nickname: "GuildFixture", level: 35, tutorial: { enabled: true, completed: false }, inventory: {} };
+setMiscItemBalance(member, 101, 2000n, 0n);
+const guildDb = { users: { "2": member } };
+const guildCtx = { userDb: guildDb, getServerNowDate: () => new Date("2026-10-09T00:00:00Z") };
+guild.handleRequest(guildCtx, member, 3400, { guildName: "BootGuild", guildJoinType: 0, badgeId: "0" });
+const originalGuilds = Object.keys(guildDb.guilds).length;
+for (const tutorialOrder of [true, false]) {
+  member.tutorial.enabled = tutorialOrder;
+  const emitted = [];
+  const bootCtx = {
+    ...ctx, userDb: guildDb, config: { ...ctx.config, REPLAY_CAPTURED_GAME_FLOW: false },
+    capturedGameFlow: null, constants: { JOIN_LOBBY_ACK: 205 },
+    findUserByAccessToken: () => member, getServerNowDate: guildCtx.getServerNowDate,
+    sendGameResponse: (_socket, _packet, id, payload) => emitted.push({ id, payload }),
+    sendServerGamePacket: (_socket, id, payload) => emitted.push({ id, payload }),
+    sendStaminaChargeNotifications: () => {},
+    writeSignedVarInt: require("../modules/packet-codec").writeSignedVarInt,
+  };
+  joinLobby.handle(bootCtx, { session: { gameReplay: {} } }, { payload: Buffer.alloc(0), sequence: 1 });
+  const lobbyIndex = emitted.findIndex(row => row.id === 205);
+  const guildNotices = emitted.filter(row => row.id === 3416);
+  assert.equal(guildNotices.length, 1, "each local login sends one real guild content notification");
+  assert(emitted.findIndex(row => row.id === 3416) > lobbyIndex, "guild content must follow lobby membership");
+  assert(guildNotices[0].payload.equals(guild.buildGuildDataUpdatedNotPayload(guildCtx, member)));
+  assert.equal(Object.keys(guildDb.guilds).length, originalGuilds, "login must not recreate the guild");
+}
+console.log("[join-lobby-guild] PASS tutorial and normal login: real 3416 after 205, one notification, no guild recreation");
