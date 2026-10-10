@@ -33,6 +33,13 @@ class RevivalSideListenerService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_READY) {
+            if (running.get()) {
+                updateNotification("服务已就绪，可以进入游戏")
+                publishStatus("Listener ready")
+            }
+            return START_STICKY
+        }
         startListener()
         return START_STICKY
     }
@@ -76,8 +83,8 @@ class RevivalSideListenerService : Service() {
             }
             nodeRuntime = runtime
 
-            publishStatus("Listener online on 127.0.0.1:${settings.httpPort}")
-            updateNotification("Listener online")
+            publishStatus("Listener runtime started; waiting for game ports on 127.0.0.1:${settings.httpPort}")
+            updateNotification("Waiting for game service")
         } catch (ex: Exception) {
             appendLog("Listener failed: ${ex.message}")
             publishStatus("Listener failed: ${ex.message}")
@@ -163,6 +170,7 @@ class RevivalSideListenerService : Service() {
         const val NOTIFICATION_ID = 6002
         const val ACTION_START = "dev.revivalside.listener.START"
         const val ACTION_STOP = "dev.revivalside.listener.STOP"
+        const val ACTION_READY = "dev.revivalside.listener.READY"
         const val ACTION_STATUS = "dev.revivalside.listener.STATUS"
         const val EXTRA_MESSAGE = "message"
         const val EXTRA_LOG_PATH = "logPath"
@@ -277,6 +285,7 @@ private class NodeProcessRuntime(
             env["CS_REQUIRE_COMBAT_HOST"] = "1"
             env["CS_EVENT_DATE"] = settings.eventDate
             env["CS_EVENT_MANAGER"] = "auto"
+            env["CS_WORLDMAP_FORCE_RAID"] = "1"
             env["CS_LOGIN_BACKGROUND"] = settings.loginBackground
             env["CS_USE_LOCAL_JOIN_LOBBY_ACK"] = settings.joinLobbyAckMode
             env["CS_USER_MANAGER_ALLOW_REMOTE"] = "0"
@@ -450,6 +459,7 @@ private class NodeProcessRuntime(
                 process.env.CS_COUNTERSIDE_DIR = ${jsString(combatGameRootPath)};
                 process.env.CS_EVENT_DATE = ${jsString(settings.eventDate)};
                 process.env.CS_EVENT_MANAGER = "auto";
+                process.env.CS_WORLDMAP_FORCE_RAID = "1";
                 process.env.CS_LOGIN_BACKGROUND = ${jsString(settings.loginBackground)};
                 process.env.CS_USE_LOCAL_JOIN_LOBBY_ACK = ${jsString(settings.joinLobbyAckMode)};
                 process.env.CS_USER_MANAGER_ALLOW_REMOTE = "0";

@@ -35,9 +35,12 @@ function createCombatHandler(options = {}) {
     defaultDeployedUnitHp: options.defaultDeployedUnitHp,
   });
   let csharpWarningPrinted = false;
+  const startupStatus = { enabled: csharpHost.enabled, ready: !csharpHost.enabled, error: "" };
   const modUnitIds = String(process.env.CS_MOD_UNIT_IDS || "").split(",").map(Number).filter((id) => Number.isSafeInteger(id) && id > 0);
   if (csharpHost.enabled) {
     const warmup = csharpHost.request("warmup", {});
+    startupStatus.ready = Boolean(warmup.ok);
+    startupStatus.error = warmup.ok ? "" : summarizeHostError(warmup.error);
     if (warmup.ok) {
       console.log(`[combat-host] warmup ok host=${csharpHost.hostPath}`);
       if (modUnitIds.length) {
@@ -804,6 +807,7 @@ function createCombatHandler(options = {}) {
   }
 
   return {
+    getStartupStatus: () => ({ ...startupStatus }),
     startBattle,
     handleDeploy,
     handlePause,

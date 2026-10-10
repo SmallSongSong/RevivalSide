@@ -161,6 +161,7 @@ function createWorldMapHandlers() {
           resultLabel: `world-map-${packetId}-raid-result-list`,
           eventCancelLabel: `world-map-${packetId}-raid-event-clear`,
           includeEmpty: true,
+          includeRaidDetails: Boolean(response.worldMapStateRefresh),
         });
       }
       if (ctx.config && ctx.config.USE_LOCAL_USER_DB && typeof ctx.saveUserDb === "function") ctx.saveUserDb();
@@ -2981,11 +2982,6 @@ function sendRaidSnapshotData(ctx, socket, user, options = {}) {
   const includeEmpty = options.includeEmpty !== false;
   const sent = [];
 
-  if (options.includeWorldMap) {
-    ctx.sendServerGamePacket(socket, 2001, buildWorldMapDataAckPayload(user, options), options.worldMapLabel || "raid-snapshot-world-map-data");
-    sent.push(2001);
-  }
-
   const activeRaidCityIds = new Set(snapshot.activeRaids.map((raid) => positiveInt(raid && raid.cityID)).filter(Boolean));
   const completedRaidCityIds = snapshot.resultRaids
     .map((raid) => positiveInt(raid && raid.cityID))
@@ -3007,6 +3003,13 @@ function sendRaidSnapshotData(ctx, socket, user, options = {}) {
   for (const raid of detailRaids) {
     ctx.sendServerGamePacket(socket, 2209, buildRaidDetailInfoAckPayload(user, raid), options.detailLabel || "raid-detail-info");
     sent.push(2209);
+  }
+
+  // SetRaid resolves eventUid through NKCRaidDataMgr when the map is drawn.
+  // Prime both the raid list and details before rebuilding branch event pins.
+  if (options.includeWorldMap) {
+    ctx.sendServerGamePacket(socket, 2001, buildWorldMapDataAckPayload(user, options), options.worldMapLabel || "raid-snapshot-world-map-data");
+    sent.push(2001);
   }
 
   if (includeEmpty || snapshot.coopRaids.length) {

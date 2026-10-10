@@ -51,6 +51,11 @@ const createFacade = (enabled = true) => facadeSandbox.module.exports.createComb
   constants: { GAME_END_NOT: 811, NPT_GAME_SYNC_DATA_PACK_NOT: 822 }, makeDynamicGameUid: () => 123n,
 });
 const facade = createFacade();
+assert.equal(facade.getStartupStatus().ready,false);
+assert.match(facade.getStartupStatus().error,/synthetic enum registry failure/);
+const startupSnapshot = facade.getStartupStatus();
+startupSnapshot.ready = true;
+assert.equal(facade.getStartupStatus().ready,false,"callers cannot mutate the startup gate");
 const stale = { dynamicGame: { managedCombat: true }, battleState: { units: [] }, managedGameLoadAckPayload: Buffer.from("stale") };
 assert.equal(facade.startBattle({ replay: stale, req: {} }), null);
 assert.equal(stale.dynamicGame, null);

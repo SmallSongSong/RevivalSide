@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "platformId": "revivalside-android-platform-77c3e1516756",
-  "treeSha256": "77c3e1516756e8eef13fccd167180ef8ac69008f362c7ad6f15a5e9393d92ca0",
+  "platformId": "revivalside-android-platform-07171731b421",
+  "treeSha256": "07171731b421a0f21fefbf62cc51af793abddfa82604af70a9fbd024285eb59d",
   "requiredFile": "combat-managed/Data/Managed/Assembly-CSharp.dll"
 }

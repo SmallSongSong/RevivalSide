@@ -83,6 +83,7 @@ vm.runInContext(sourceFunctions("positiveInt", "readMiscStageRecords"), sandbox)
 vm.runInContext(sourceFunctions("mapListPush", "choosePhaseOrder"), sandbox);
 vm.runInContext(sourceFunctions("resolveMiscStageRequest", "classifyMiscDungeon"), sandbox);
 vm.runInContext(sourceFunctions("buildTrimModeState", "buildFierceDataAckPayload"), sandbox);
+vm.runInContext(sourceFunctions("buildTrimIntervalData", "buildSelectableContractStateData"), sandbox);
 const stageRows = readGameplayTableRecords("ab_script", "LUA_STAGE_TEMPLET.json", { rootDir });
 const dungeonRows = readGameplayTableRecords("ab_script_dungeon_templet", "LUA_DUNGEON_TEMPLET_BASE.json", { rootDir });
 const mapRows = readGameplayTableRecords("ab_script", "LUA_MAP_TEMPLET.json", { rootDir });
@@ -274,6 +275,43 @@ for (const [index, row] of trimRows.entries()) {
 assert.equal(costs - costBeforeTrim, 1);
 assert.equal(trimUser.miscStages.trim.current, null);
 assert.equal(trimUser.miscStages.trim.lastClear.trimLevel, 5, "retain the chosen level rather than its table range's lower bound");
+assert.equal(trimUser.miscStages.trim.pendingEnd.trimStageResults.length, 3, "final state survives until the native 1240 settlement request");
+Object.assign(sandbox, {
+  createEmptyReward: rewardModule.createEmptyReward, mergeReward: rewardModule.mergeReward,
+  grantRewardByType: rewardModule.grantRewardByType, buildSerializedRewardData: codec.buildRewardData,
+  dateTimeBinaryNow: () => 0n, RESOURCE_ITEM_IDS: { CREDIT: 1 },
+});
+const trimEndHandler = handlers.get(1240);
+assert.equal(trimEndHandler.name, "TRIM_END_REQ", "final settlement must use the specialist handler instead of a six-byte hydrated placeholder");
+let trimEndPayload;
+let trimProgressPayload;
+const trimPackets = [];
+trimEndHandler.handle({decryptCopy:Buffer.from, buildTrimEndAckPayload:sandbox.buildTrimEndAckPayload,
+  buildTrimProgressNotPayload:sandbox.buildTrimProgressNotPayload,
+  sendGameResponse(_socket,_packet,id,payload){assert.equal(id,1241);trimEndPayload=payload;trimPackets.push(id);},
+  sendServerGamePacket(_socket,id,payload){assert.equal(id,1242);trimProgressPayload=payload;trimPackets.push(id);}},
+  {session:{user:trimUser}}, {payload:codec.writeSignedVarInt(101)});
+assert(trimEndPayload.length > 6, "native result screen receives the whole chain and clear/reward objects");
+assert.equal(codec.readSignedVarInt(trimEndPayload,0).value,0);
+assert.equal(trimEndPayload[1],1,"first completed chain is marked as a first clear");
+assert.equal(trimUser.miscStages.trim.clearRecords["101:5"].isWin,true);
+assert.deepEqual(trimPackets,[1241,1242],"the client receives its clear list as well as the result scene");
+assert(trimProgressPayload.equals(sandbox.buildTrimProgressNotPayload(trimUser)));
+const trimInventory = JSON.stringify(trimUser.inventory,(_key,value)=>typeof value === "bigint" ? String(value) : value);
+assert(sandbox.buildTrimEndAckPayload({trimId:101},trimUser).equals(trimEndPayload),"repeated final request returns cached settlement");
+assert.equal(JSON.stringify(trimUser.inventory,(_key,value)=>typeof value === "bigint" ? String(value) : value),trimInventory,"repeated final request cannot duplicate rewards");
+const persistedTrim = JSON.parse(JSON.stringify(trimUser,(_key,value)=>typeof value === "bigint" ? String(value) : value));
+assert.equal(sandbox.buildTrimClearListForUser(persistedTrim).length,1,"login restores the completed level");
+assert(sandbox.buildTrimEndAckPayload({trimId:101},persistedTrim).equals(trimEndPayload),"settlement cache survives restarting the service");
+const failedTrim = {miscStages:{trim:{pendingEnd:{trimId:101,trimLevel:5,nextDungeonId:0,
+  trimStageList:trimRows,trimStageResults:[{score:1,isWin:true},{score:0,isWin:false}]}}}};
+sandbox.buildTrimEndAckPayload({trimId:101},failedTrim);
+assert.equal(sandbox.buildTrimClearListForUser(failedTrim).length,0,"an interrupted or lost chain cannot unlock a level");
+assert.notEqual(codec.readSignedVarInt(sandbox.buildTrimEndAckPayload({trimId:104},failedTrim),0).value,0,"a request cannot settle another chapter");
+if (process.argv[2]) {
+  fs.writeFileSync(process.argv[2],JSON.stringify({typeName:"ClientPacket.Mode.NKMPacket_TRIM_END_ACK",payloadBase64:trimEndPayload.toString("base64")}));
+  fs.writeFileSync(process.argv[2]+".progress.json",JSON.stringify({packetId:1242,payloadBase64:trimProgressPayload.toString("base64")}));
+}
 const skipTrimUser = { miscStages: { trim: { current: { trimId: 101, trimLevel: 5, trimStageList: trimRows, nextDungeonId: 7001001 } } } };
 assert.equal(attemptGameLoad(skipTrimUser, { stageID: 7001003, dungeonID: 7001003 }).loaded, 0, "trim cannot skip its pending stage");
 

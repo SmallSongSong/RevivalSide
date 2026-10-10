@@ -13,6 +13,10 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM_SHA = "abad85109100ef5eafb8a9ebb317571d5618af4b2372f27971aa986e0cd33864"
+SUPPORTED_BASE_APKS = {
+    UPSTREAM_SHA,
+    "ebfed97cb36836803e10bc2b3612df3242976dcd1031e4b6e3a0dd8a288b2d42",
+}
 ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android"
 
 
@@ -137,10 +141,11 @@ def is_signature(name):
 def build(args):
     if args.output.resolve() == args.upstream_apk.resolve():
         raise ValueError("The rebuilt APK must use a different output path from the upstream APK")
-    if digest_file(args.upstream_apk) != UPSTREAM_SHA:
-        raise ValueError("Upstream release shell SHA-256 mismatch")
+    base_sha = digest_file(args.upstream_apk)
+    if base_sha not in SUPPORTED_BASE_APKS:
+        raise ValueError("Base APK SHA-256 differs from the pinned v0.4.0a and v0.4.4a releases")
     report = json.loads(args.report.read_text())
-    if report["version"] != args.version or report["upstreamApkSha256"] != UPSTREAM_SHA:
+    if report["version"] != args.version or report["upstreamApkSha256"] != base_sha:
         raise ValueError("Backend staging report does not match this build")
     assets = ROOT / "kmp/app/src/main/assets"
     compiled_ui = None
@@ -185,8 +190,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--upstream-apk", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--version", default="0.4.3a")
-    parser.add_argument("--version-code", type=int, default=15)
+    parser.add_argument("--version", default="0.4.5a")
+    parser.add_argument("--version-code", type=int, default=23)
     parser.add_argument("--report", type=Path, default=ROOT / "exports/android-local-build.json")
     parser.add_argument("--compiled-ui", type=Path)
     build(parser.parse_args())

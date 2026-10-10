@@ -62,7 +62,7 @@ The tool patches both the fixed-width IL2CPP endpoint and Gamebase's launching r
 
 ### Local fork test releases
 
-The local fork uses version `0.4.4a` (`versionCode=22`). The build compiles the Android Kotlin/Java frontend and DEX from current sources while preserving the verified upstream Android `v0.4.0a` resources, native libraries and game data. It also rebuilds the shared listener and both managed combat hosts.
+The local fork uses version `0.4.5a` (`versionCode=23`). The build compiles the Android Kotlin/Java frontend and DEX from current sources while preserving the verified Android `v0.4.4a` resources, native libraries and game data. It also rebuilds the shared listener and both managed combat hosts. Download the base APK from this fork's `v0.4.4a` release into `exports/upstream-android/RevivalSide-Android-v0.4.4a.apk`; its SHA-256 is pinned in the staging and repacking tools. The older pinned upstream `v0.4.0a` base remains supported when passed explicitly.
 
 The main screen uses one START/STOP toggle and a separate Chinese Fierce Boss selector. START starts the local listener; the official capture workflow is not part of this control. Boss selection is persisted outside the account database and applies without restarting; in-flight Fierce battles reject changes.
 
@@ -71,7 +71,7 @@ The local release builder requires Python 3.9+, Node.js, .NET 8, JDK 17, Android
 Configure `JAVA_HOME`, `ANDROID_HOME`, `REVIVALSIDE_ANDROID_KEYSTORE`, `REVIVALSIDE_ANDROID_KEY_ALIAS`, `REVIVALSIDE_ANDROID_KEYSTORE_PASSWORD` and `REVIVALSIDE_ANDROID_KEY_PASSWORD`, then run:
 
 ```sh
-REVIVALSIDE_ANDROID_VERSION=0.4.4a REVIVALSIDE_ANDROID_VERSION_CODE=22 bash tools/build-android-local-release.sh
+REVIVALSIDE_ANDROID_VERSION=0.4.5a REVIVALSIDE_ANDROID_VERSION_CODE=23 bash tools/build-android-local-release.sh
 ```
 
-Stage new runtime files before packaging. The builder excludes personal account databases and `.env`, removes obsolete shared handlers, compiles the frontend, updates the manifest, aligns and signs the archive, and verifies source/DEX/resource/native/payload hashes. It preserves the original CounterSide client and external payload contract. Fork updates require the same signing identity; back up account data before changing keys.
+Stage new runtime files before packaging. The builder excludes personal account databases and `.env`, removes obsolete shared handlers, compiles the frontend, updates the manifest, aligns and signs the archive, and verifies source/DEX/resource/native/payload hashes. It preserves the original CounterSide client and external payload contract. Version 0.4.5a starts a new signing identity: back up account data and retain the external payload ZIP before uninstalling a previous release. Later releases signed with this key can update 0.4.5a in place. Never publish the signing key or personal backups.

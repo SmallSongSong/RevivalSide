@@ -14,6 +14,10 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "kmp/app/src/main/assets"
 UPSTREAM_SHA = "abad85109100ef5eafb8a9ebb317571d5618af4b2372f27971aa986e0cd33864"
+SUPPORTED_BASE_APKS = {
+    UPSTREAM_SHA: "v0.4.0a",
+    "ebfed97cb36836803e10bc2b3612df3242976dcd1031e4b6e3a0dd8a288b2d42": "v0.4.4a",
+}
 SOURCE_ROOTS = ("server", "modules", "packet-handlers", "combat-handler", "combat-simulator", "stages")
 SOURCE_FILES = ("cs-listener.js", "package.json", "package-lock.json", "packet-schema.json", "gameplay-jsons/generated/dive-dungeon-pool.json")
 FIXED_TIME = (2026, 10, 8, 0, 0, 0)
@@ -64,7 +68,8 @@ def write_json(path, value):
 
 
 def tree_sha(directory):
-    records = [f"{path.relative_to(directory).as_posix()}|{file_sha(path)}" for path in sorted(directory.rglob("*")) if path.is_file()]
+    files = sorted((path for path in directory.rglob("*") if path.is_file()), key=lambda path: path.relative_to(directory).as_posix())
+    records = [f"{path.relative_to(directory).as_posix()}|{file_sha(path)}" for path in files]
     return sha("\n".join(records).encode())
 
 
@@ -85,14 +90,15 @@ def stage(args):
     untracked_runtime = [name for name in git("ls-files", "--others", "--exclude-standard", "-z", "--", *SOURCE_ROOTS, "combat-host").decode().split("\0") if name]
     if untracked_runtime:
         raise ValueError("Stage new runtime files with git add before packaging: " + ", ".join(untracked_runtime))
-    if file_sha(args.upstream_apk) != UPSTREAM_SHA:
-        raise ValueError("Upstream APK SHA-256 differs from the pinned v0.4.0a release")
+    base_sha = file_sha(args.upstream_apk)
+    if base_sha not in SUPPORTED_BASE_APKS:
+        raise ValueError("Base APK SHA-256 differs from the pinned v0.4.0a and v0.4.4a releases")
     check_publish(args.combat_host_publish)
     names = source_paths()
     managed_sources = {name: (ROOT / name).read_bytes() for name in names if name.startswith("combat-host/")}
     # Reusing the native bridge is valid only while its source and build flags stay unchanged.
     for name in ("kmp/app/src/main/cpp/native-lib.cpp", "kmp/app/src/main/cpp/dotnet-host.cpp", "kmp/app/CMakeLists.txt"):
-        if (ROOT / name).read_bytes() != git("show", f"{args.native_source_ref}:{name}"):
+        if (ROOT / name).read_bytes().replace(b"\r\n", b"\n") != git("show", f"{args.native_source_ref}:{name}").replace(b"\r\n", b"\n"):
             raise ValueError(f"Native source changed: {name}; build with the NDK instead")
     with zipfile.ZipFile(args.upstream_apk) as base, tempfile.TemporaryDirectory(prefix="revivalside-stage-") as temporary:
         staging = Path(temporary)
@@ -150,10 +156,10 @@ def stage(args):
         })
         report = {
             "buildMode": "rebuilt-listener-and-managed-host-with-pinned-release-shell",
-            "shellRelease": "v0.4.0a",
+            "shellRelease": SUPPORTED_BASE_APKS[base_sha],
             "version": args.version, "baseCommit": git("rev-parse", "HEAD").decode().strip(),
             "trackedWorktreeChanges": git("diff", "--name-only", "HEAD").decode().splitlines(),
-            "upstreamApkSha256": UPSTREAM_SHA, "nativeSourceRef": args.native_source_ref,
+            "upstreamApkSha256": base_sha, "nativeSourceRef": args.native_source_ref,
             "payloadSha256": payload_hash, "platformTreeSha256": platform_hash,
             "packagedListenerSha256": sha(merged["server/listener.js"]),
             "combatHostSha256": file_sha(args.combat_host_publish / "CombatHost.dll"),
@@ -189,6 +195,6 @@ if __name__ == "__main__":
     parser.add_argument("--upstream-apk", type=Path, required=True)
     parser.add_argument("--combat-host-publish", type=Path, required=True)
     parser.add_argument("--native-source-ref", required=True)
-    parser.add_argument("--version", default="0.4.3a")
+    parser.add_argument("--version", default="0.4.5a")
     parser.add_argument("--report", type=Path, default=ROOT / "exports/android-local-build.json")
     stage(parser.parse_args())

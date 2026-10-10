@@ -27,6 +27,8 @@ try {
   worldMap.createWorldMapHandlers().find(handler => handler.packetId === 2006).handle(ctx, socket, { sequence: 1, payload: Buffer.concat([codec.writeSignedVarInt(cityId), codec.writeSignedVarInt(0)]) });
   assert.equal(packets[0], 2007, "dispatch is acknowledged before refreshing the encounter");
   assert(packets.includes(2001) && packets.includes(2201), "branch map and raid list must update immediately");
+  assert(packets.indexOf(2201) < packets.indexOf(2209) && packets.indexOf(2209) < packets.indexOf(2001),
+    "the client must cache the raid list and details before SetRaid redraws the branch pin");
   let city = user.worldMap.cities[String(cityId)];
   const uid = city.eventGroup.eventUid;
   assert.notEqual(uid, "0", "default offline dispatch guarantees an encounter even when the old chance was zero");

@@ -32,6 +32,9 @@ import android.widget.Space
 import android.widget.TextView
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.InetSocketAddress
+import java.net.Socket
+import org.json.JSONObject
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
@@ -70,6 +73,11 @@ class MainActivity : Activity() {
     private var listenerToggleStarting = false
     private var listenerStopCooldown = false
     private var listenerReportedRunning: Boolean? = null
+    private lateinit var startupOverlay: LinearLayout
+    private lateinit var startupStageText: TextView
+    private lateinit var startupDetailText: TextView
+    private lateinit var startupProgress: ProgressBar
+    private lateinit var startupReturnButton: Button
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -100,12 +108,12 @@ class MainActivity : Activity() {
                     listenerStatusText.text = message
                     appendLog("Listener: $message")
                     if (isListenerStartupProgress(message)) listenerProgressAtMs = SystemClock.elapsedRealtime()
-                    if (message.startsWith("Listener online") || message.startsWith("Listener is already running") ||
-                        message.startsWith("Listener failed") || message.startsWith("Listener stopped")) {
-                        listenerToggleStarting = false
-                    }
-                    if (message.startsWith("Listener online") || message.startsWith("Listener is already running")) listenerReportedRunning = true
+                    // Runtime creation is only the beginning of readiness, not its completion.
+                    if (message.startsWith("Listener online") || message.startsWith("Listener runtime started") || message.startsWith("Listener is already running")) listenerReportedRunning = true
                     if (message.startsWith("Listener failed") || message.startsWith("Listener stopped")) listenerReportedRunning = false
+                    if (listenerToggleStarting && (message.startsWith("Listener failed") || message.startsWith("Listener stopped"))) {
+                        failListenerStartup(message)
+                    }
                     syncListenerToggle()
                 }
             }
@@ -119,7 +127,13 @@ class MainActivity : Activity() {
         window.decorView.requestFocus()
         requestNotificationPermissionIfNeeded()
         registerStatusReceiver()
+        if (Build.VERSION.SDK_INT >= 33) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT) { onBackPressed() }
+        }
         appendLog("Ready")
+        if (savedInstanceState?.getBoolean("listenerStarting") == true || RevivalSideListenerService.isRunning(this)) {
+            beginListenerStartup(saveSettingsFromInputs(), startRuntime = false)
+        }
     }
 
     override fun onResume() {
@@ -129,8 +143,25 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        startFlowToken += 1
+        handler.removeCallbacksAndMessages(null)
         runCatching { unregisterReceiver(statusReceiver) }
         super.onDestroy()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("listenerStarting", listenerToggleStarting)
+        super.onSaveInstanceState(outState)
+    }
+
+    @Deprecated("This dependency-free Activity uses the platform back callback.")
+    override fun onBackPressed() {
+        if (listenerToggleStarting) return
+        if (::startupOverlay.isInitialized && startupOverlay.visibility == View.VISIBLE) {
+            startupOverlay.visibility = View.GONE
+            return
+        }
+        super.onBackPressed()
     }
 
     @Deprecated("VPN permission result uses the platform callback for this no-dependency app.")
@@ -306,6 +337,29 @@ class MainActivity : Activity() {
         }
         root.addView(scroll, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         root.addView(bottomBar(), FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        startupOverlay = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(32), dp(32), dp(32), dp(32))
+            background = verticalGradient(0xff101827.toInt(), 0xff171e30.toInt())
+            isClickable = true
+            isFocusable = true
+            visibility = View.GONE
+            addView(statusText("正在启动 RevivalSide").apply { textSize = 26f }, fillWrap())
+            startupStageText = statusText("")
+            addView(startupStageText, fillWrapWithBottom(dp(16)))
+            startupProgress = ProgressBar(this@MainActivity, null, android.R.attr.progressBarStyleHorizontal).apply { max = 4 }
+            addView(startupProgress, fillWrapWithBottom(dp(16)))
+            startupDetailText = mutedText("", 15f)
+            addView(startupDetailText, fillWrapWithBottom(dp(20)))
+            startupReturnButton = Button(this@MainActivity).apply {
+                text = "返回"
+                visibility = View.GONE
+                setOnClickListener { startupOverlay.visibility = View.GONE }
+            }
+            addView(startupReturnButton, fillWrap())
+        }
+        root.addView(startupOverlay, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         return root
     }
 
@@ -341,18 +395,111 @@ class MainActivity : Activity() {
     }
 
     private fun startOperation() {
-        val settings = saveSettingsFromInputs()
-        startFlowToken += 1
+        beginListenerStartup(saveSettingsFromInputs(), startRuntime = true)
+    }
+
+    private fun showStartupStage(completedSteps: Int, stage: String) {
+        startupOverlay.visibility = View.VISIBLE
+        startupProgress.visibility = View.VISIBLE
+        startupProgress.progress = completedSteps
+        startupStageText.text = stage
+        startupDetailText.text = "启动期间请留在此页面，完成后再进入游戏。首次启动可能需要较长时间。"
+        startupReturnButton.visibility = View.GONE
+        startupOverlay.requestFocus()
+    }
+
+    private fun beginListenerStartup(settings: RevivalSideSettings, startRuntime: Boolean) {
+        val token = ++startFlowToken
         launchAfterStart = false
         launchAfterCapture = false
         listenerToggleStarting = true
+        listenerProgressAtMs = SystemClock.elapsedRealtime()
+        showStartupStage(0, "1/4 · 准备服务与资源")
         syncListenerToggle()
-        runCatching { startListener(settings) }.onFailure { error ->
-            listenerToggleStarting = false
-            listenerReportedRunning = false
-            appendLog("Listener failed: ${error.message}")
-            syncListenerToggle()
+        runCatching {
+            if (startRuntime) startListener(settings)
+            waitForStartupHealth(settings, token)
+        }.onFailure { failListenerStartup("启动服务失败：${it.message}") }
+    }
+
+    private fun waitForStartupHealth(settings: RevivalSideSettings, token: Int) {
+        if (token != startFlowToken || !listenerToggleStarting) return
+        Thread {
+            val health = readListenerHealth(settings)
+            runOnUiThread {
+                if (token != startFlowToken || !listenerToggleStarting) return@runOnUiThread
+                when {
+                    health.ready -> prepareListenerForPlay(settings, token)
+                    health.fatalMessage.isNotBlank() -> failListenerStartup(health.fatalMessage)
+                    listenerHealthTimedOut() -> failListenerStartup("等待服务就绪超时，请返回后停止服务并重试。")
+                    else -> {
+                        showStartupStage(1, "2/4 · 等待游戏服务端口")
+                        handler.postDelayed({ waitForStartupHealth(settings, token) }, LISTENER_HEALTH_INTERVAL_MS)
+                    }
+                }
+            }
+        }.start()
+    }
+
+    private fun prepareListenerForPlay(settings: RevivalSideSettings, token: Int) {
+        showStartupStage(2, "3/4 · 预热大厅与账号数据")
+        Thread {
+            val result = runCatching {
+                val mode = requestServerInfoMode(settings, SERVER_MODE_REVIVALSIDE)
+                check(mode.ok) { "选择本地服务器失败：${mode.summary}" }
+                val warmup = requestListenerWarmup(settings)
+                check(warmup.ok) { "大厅数据预热失败：${warmup.summary}" }
+                runOnUiThread {
+                    if (token == startFlowToken && listenerToggleStarting) showStartupStage(3, "4/4 · 验证客户端连接地址")
+                }
+                verifyGameEndpoints(settings)
+            }
+            runOnUiThread {
+                if (token != startFlowToken || !listenerToggleStarting) return@runOnUiThread
+                result.onSuccess {
+                    listenerToggleStarting = false
+                    listenerReportedRunning = true
+                    startupProgress.progress = 4
+                    startupOverlay.visibility = View.GONE
+                    listenerStatusText.text = "服务已就绪，可以进入游戏"
+                    startService(Intent(this, RevivalSideListenerService::class.java).setAction(RevivalSideListenerService.ACTION_READY))
+                    appendLog("Listener ready: lobby warmed and ServerInfo/game TCP verified")
+                    syncListenerToggle()
+                }.onFailure { failListenerStartup(it.message ?: "连接验证失败") }
+            }
+        }.start()
+    }
+
+    private fun verifyGameEndpoints(settings: RevivalSideSettings) {
+        val connection = URL("http://127.0.0.1:${settings.httpPort}/revivalsideapk/server_config/live/ServerInfo_V2.json").openConnection() as HttpURLConnection
+        try {
+            connection.connectTimeout = 2000
+            connection.readTimeout = 5000
+            connection.useCaches = false
+            check(connection.responseCode == 200) { "客户端服务器地址不可用：HTTP ${connection.responseCode}" }
+            val servers = JSONObject(connection.inputStream.bufferedReader().use { it.readText() }).getJSONObject("server")
+            val gameServer = servers.getJSONObject("Global")
+            check(gameServer.getString("ip") in listOf("127.0.0.1", "localhost") && gameServer.getInt("port") == settings.gamePort) {
+                "客户端服务器地址未指向本地服务，请检查端口设置。"
+            }
+        } finally {
+            connection.disconnect()
         }
+        Socket().use { it.connect(InetSocketAddress("127.0.0.1", settings.gamePort), 2000) }
+    }
+
+    private fun failListenerStartup(message: String) {
+        startFlowToken += 1
+        listenerToggleStarting = false
+        listenerReportedRunning = RevivalSideListenerService.isRunning(this)
+        startupOverlay.visibility = View.VISIBLE
+        startupProgress.visibility = View.GONE
+        startupStageText.text = "服务尚未就绪"
+        startupDetailText.text = message
+        startupReturnButton.visibility = View.VISIBLE
+        listenerStatusText.text = message
+        appendLog(message)
+        syncListenerToggle()
     }
 
     private fun openPayloadZipPicker() {
@@ -658,12 +805,13 @@ class MainActivity : Activity() {
             }
             if (connection.responseCode !in 200..299) return ListenerHealth(false)
             val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val compact = body.filterNot { it.isWhitespace() }
-            val correctPort = compact.contains("\"port\":${settings.gamePort}")
-            if (correctPort && compact.contains("\"ok\":true")) {
+            val health = JSONObject(body)
+            val correctPort = health.optInt("port") == settings.gamePort
+            val combatHost = health.optJSONObject("combatHost")
+            if (correctPort && health.optBoolean("ok")) {
                 ListenerHealth(true)
-            } else if (correctPort && compact.contains("\"combatHost\":{\"enabled\":") && compact.contains("\"ready\":false")) {
-                ListenerHealth(false, extractJsonString(compact, "error").ifBlank { "Managed combat host did not start; game launch was blocked." })
+            } else if (correctPort && combatHost?.optBoolean("enabled") == true && !combatHost.optBoolean("ready")) {
+                ListenerHealth(false, combatHost.optString("error").ifBlank { "战斗服务初始化失败，请返回后停止服务并重试。" })
             } else {
                 ListenerHealth(false)
             }
@@ -686,11 +834,14 @@ class MainActivity : Activity() {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-            val compact = body.filterNot { it.isWhitespace() }
-            if (status in 200..299 && compact.contains("\"ok\":true")) {
-                WarmupResult(true, extractWarmupSummary(compact))
+            val response = JSONObject(body)
+            if (status in 200..299 && response.optBoolean("ok")) {
+                WarmupResult(true, extractWarmupSummary(body))
             } else {
-                WarmupResult(false, "HTTP $status")
+                val error = response.optString("error").ifBlank {
+                    response.optJSONObject("joinLobbyAck")?.optJSONArray("errors")?.optJSONObject(0)?.optString("error").orEmpty()
+                }
+                WarmupResult(false, error.ifBlank { "HTTP $status" })
             }
         } catch (error: Exception) {
             WarmupResult(false, error.message.orEmpty())

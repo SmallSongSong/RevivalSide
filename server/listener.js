@@ -696,6 +696,7 @@ let lastEffectiveAccessToken = "";
 let lastAckContentsVersion = "";
 let lastAckContentsTags = [];
 let runtimeConfigPrinted = false;
+let tcpServerListening = false;
 
 startTcpServer();
 startHttpMirror();
@@ -732,7 +733,10 @@ function startTcpServer() {
     socket.on("error", (err) => console.log(`[!] Socket error: ${err.message}`));
   });
 
-  server.listen(PORT, () => console.log(`[+] Listening on port ${PORT}`));
+  server.listen(PORT, () => {
+    tcpServerListening = true;
+    console.log(`[+] Listening on port ${PORT}`);
+  });
 }
 
 function logRuntimeConfig() {
@@ -940,8 +944,11 @@ async function serveLauncherApi(req, res) {
   }
 
   if (req.method === "GET" && url.pathname === "/launcher/api/health") {
+    const combatHost = combatHandler.getStartupStatus();
     sendJsonResponse(res, 200, {
-      ok: true,
+      ok: tcpServerListening && combatHost.ready,
+      tcpListening: tcpServerListening,
+      combatHost,
       port: PORT,
       httpPort: HTTP_MIRROR_PORT,
       userManagerPath: userManager ? userManager.basePath : "",
@@ -1010,6 +1017,10 @@ function sendJsonResponse(res, statusCode, body) {
 }
 
 function warmLauncherRuntime() {
+  const combatHost = combatHandler.getStartupStatus();
+  if (!tcpServerListening || !combatHost.ready) {
+    return { ok: false, error: combatHost.error || "Game listener is not ready." };
+  }
   const startedAt = Date.now();
   const users = getJoinLobbyWarmupUsers();
   const warmed = [];
@@ -1629,6 +1640,8 @@ function createPacketContext() {
     buildShadowPalaceStartAckPayload,
     buildPhaseStartAckPayload,
     buildTrimStartAckPayload,
+    buildTrimEndAckPayload,
+    buildTrimProgressNotPayload,
     buildFierceDataAckPayload,
     buildFiercePenaltyAckPayload,
     buildFierceProfileAckPayload,
@@ -4371,7 +4384,7 @@ function buildDynamicGameEndNotPayload(replay, override = {}) {
   ]);
   replay.dynamicGameEndPayload = payload;
   if (phaseResult && !phaseResult.completed && USE_LOCAL_USER_DB) saveUserDb();
-  if (trimResult && !trimResult.completed && USE_LOCAL_USER_DB) saveUserDb();
+  if (trimResult && USE_LOCAL_USER_DB) saveUserDb();
   if (diveBattleResult && USE_LOCAL_USER_DB) saveUserDb();
   if (fierceRecord && fierceRecord.changed && USE_LOCAL_USER_DB) saveUserDb();
   if (dynamicGame.miscMode === "shadow" && USE_LOCAL_USER_DB) saveUserDb();
@@ -4415,6 +4428,7 @@ function resolveTrimBattleResult(dynamicGame, user, win, playTime) {
   if (user) {
     const saved = ensureMiscStageState(user).trim ||= {};
     saved.current = nextDungeonId ? state : null;
+    if (!nextDungeonId) saved.pendingEnd = state;
     if (win) saved.lastClear = { trimId: dynamicGame.trimId, trimLevel: dynamicGame.trimLevel, dungeonId: dynamicGame.dungeonID, stageId: dynamicGame.stageID, score: lastClearStage.score };
   }
   return { completed: win && !nextDungeonId, index, state };
@@ -8181,6 +8195,8 @@ function buildTrimStartAckPayload(req = {}, user = null) {
   const state = ensureMiscStageState(user);
   if (state && trimId) {
     state.trim = state.trim && typeof state.trim === "object" ? state.trim : {};
+    state.trim.pendingEnd = null;
+    state.trim.lastEnd = null;
     state.trim.current = {
       trimId,
       trimLevel,
@@ -8225,6 +8241,75 @@ function buildTrimStageData(index, dungeonId, score, isWin) {
     writeSignedVarInt(positiveInt(dungeonId)),
     writeSignedVarInt(Math.max(0, Number(score || 0) || 0)),
     writeBool(Boolean(isWin)),
+  ]);
+}
+
+function buildTrimClearData(data = {}, reward = null) {
+  return Buffer.concat([
+    writeBool(Boolean(data.isWin)), writeSignedVarInt(positiveInt(data.trimId)),
+    writeSignedVarInt(positiveInt(data.trimLevel)), writeSignedVarInt(positiveInt(data.score)),
+    reward ? writeNullableObject(buildSerializedRewardData(reward)) : writeNullObject(),
+  ]);
+}
+
+function buildTrimClearListForUser(user) {
+  const trim = user && ensureMiscStageState(user).trim;
+  return Object.values(trim && trim.clearRecords || {}).filter(row => row && row.isWin)
+    .map(row => writeNullableObject(buildTrimClearData(row)));
+}
+
+function buildTrimProgressNotPayload(user) {
+  return Buffer.concat([
+    writeSignedVarInt(0), // Offline interval matches the local JOIN_LOBBY_ACK.
+    writeNullableObject(buildTrimIntervalData()),
+    writeObjectList(buildTrimClearListForUser(user)),
+  ]);
+}
+
+function buildTrimEndAckPayload(req = {}, user = null) {
+  const trim = user && ensureMiscStageState(user).trim;
+  const trimId = positiveInt(req.trimId);
+  let result = trim && trim.lastEnd;
+  if (!result || positiveInt(result.state.trimId) !== trimId) {
+    const state = trim && (trim.pendingEnd || trim.current);
+    if (!state || positiveInt(state.trimId) !== trimId) {
+      return Buffer.concat([writeSignedVarInt(1), writeBool(false), writeSignedVarInt(0), writeNullObject(), writeNullObject(), writeObjectList([])]);
+    }
+    const stages = state.trimStageResults || [];
+    const isWin = !state.nextDungeonId && stages.length === state.trimStageList.length
+      && stages.length > 0 && stages.every(row => row && row.isWin);
+    const score = stages.reduce((sum, row) => sum + positiveInt(row && row.score), 0);
+    const records = trim.clearRecords ||= {};
+    const key = `${trimId}:${positiveInt(state.trimLevel)}`;
+    const previous = records[key];
+    const isFirst = isWin && !previous;
+    const bestScore = Math.max(positiveInt(previous && previous.score), isWin ? score : 0);
+    const reward = createEmptyReward();
+    if (isWin) {
+      const row = readMiscStageRecords("LUA_TRIM_REWARD_CL.json")
+        .find(row => positiveInt(row.TrimID) === trimId && positiveInt(row.TrimLevel) === positiveInt(state.trimLevel));
+      const grant = (type, id, count) => {
+        if (type && positiveInt(id) && positiveInt(count)) mergeReward(reward,
+          grantRewardByType({ dateTimeBinaryNow }, user, type, positiveInt(id), positiveInt(count), positiveInt(count), 0, { expandPackages: false }));
+      };
+      if (row) {
+        if (isFirst) grant(row.FirstClearRewardType, row.FirstClearRewardID, row.FirstClearRewardValue);
+        grant("RT_MISC", RESOURCE_ITEM_IDS.CREDIT, row.m_RewardCredit_Min);
+      }
+      records[key] = { isWin: true, trimId, trimLevel: positiveInt(state.trimLevel), score: bestScore };
+    }
+    result = { state: { ...state, nextDungeonId: 0 }, isFirst, bestScore,
+      clear: { isWin, trimId, trimLevel: positiveInt(state.trimLevel), score }, reward };
+    trim.lastEnd = result;
+    trim.pendingEnd = null;
+    trim.current = null;
+    if (USE_LOCAL_USER_DB) saveUserDb();
+    console.log(`[trim-end] trimId=${trimId} level=${state.trimLevel} win=${isWin ? 1 : 0} first=${isFirst ? 1 : 0} score=${score}`);
+  }
+  return Buffer.concat([
+    writeSignedVarInt(0), writeBool(result.isFirst), writeSignedVarInt(result.bestScore),
+    writeNullableObject(buildTrimModeState(result.state)),
+    writeNullableObject(buildTrimClearData(result.clear, result.reward)), writeObjectList([]),
   ]);
 }
 
@@ -9471,9 +9556,10 @@ function buildMinimalJoinLobbyPayload(user) {
     writeObjectList([]), // consumerPackages
     writeNullObject(), // npcPvpData
     writeNullableObject(buildTrimIntervalData()), // trimIntervalData
-    writeObjectList([]), // trimClearList
+    writeObjectList(buildTrimClearListForUser(user)), // trimClearList
     writeNullableObject(buildShipModuleCandidateData()), // shipSlotCandidate
-    writeNullObject(), // trimModeState
+    user && user.miscStages && user.miscStages.trim && user.miscStages.trim.current
+      ? writeNullableObject(buildTrimModeState(user.miscStages.trim.current)) : writeNullObject(), // trimModeState
     writeBool(false), // enableAccountLink
     writeNullableObject(buildEventCollectionInfoData()), // eventCollectionInfo
     writeNullableObject(buildUserProfileData(user, userUid, friendCode, nickname)), // userProfileData

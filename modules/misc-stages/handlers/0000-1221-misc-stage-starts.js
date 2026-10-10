@@ -145,6 +145,20 @@ module.exports = [
     },
   },
   {
+    packetId: 1240,
+    name: "TRIM_END_REQ",
+    handle(ctx, socket, packet) {
+      const req = decodeSingleIntReq(ctx, packet.payload, "trimId");
+      ctx.sendGameResponse(socket, packet, 1241,
+        ctx.buildTrimEndAckPayload(req, socket.session && socket.session.user), "trim-end");
+      // END_ACK opens the result scene; INTERVAL_INFO_NOT updates TrimData's
+      // clear list and unlocks the next level in the same login session.
+      ctx.sendServerGamePacket(socket, 1242,
+        ctx.buildTrimProgressNotPayload(socket.session && socket.session.user), "trim-progress");
+      return true;
+    },
+  },
+  {
     packetId: 1255,
     name: "EXPLORE_INFO_REQ",
     handle(ctx, socket, packet) {

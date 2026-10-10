@@ -1,7 +1,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const path = require("node:path");
-const { createEventManager, buildEventRegistry, selectOfflineDefenceEntries, buildActiveEventState, resolveEventManagerConfig } = require("../modules/event-manager");
+const { createEventManager, buildEventRegistry, selectOfflineDefenceEntries, selectOfflineEpisodeEntries, buildActiveEventState, resolveEventManagerConfig } = require("../modules/event-manager");
 const { loadPacketHandlers } = require("../server/packetHandlerLoader");
 const codec = require("../modules/packet-codec");
 const fixture = require("./fixtures/limited-event-frozen-defence.json");
@@ -60,4 +60,40 @@ assert.equal(closed.endDate.getUTCFullYear(),1999);
 assert(!actual.offlineModuleSuppressedIntervalStrKeys.some(key => key.includes("CONTRACT")),"unrelated contract intervals stay untouched");
 assert.equal(handlers.get(3900).name,"DEFENCE_GAME_START_REQ");
 assert.equal(handlers.get(3902).name,"DEFENCE_GAME_GIVE_UP_REQ");
-console.log("[limited-event] PASS frozen native Event 58 / defence 23 / boss dungeon 8030023; all three windows, banner, fallback, historical schedule isolation, disable and actual entry handlers");
+
+// The lobby hourglass uses GetMainSummaryTemplet, independently of defence collections.
+const episode = manager.getRegistry().offlineEpisodeEntries[0];
+const offlineEpisodes = manager.getRegistry().offlineEpisodeEntries;
+assert.deepEqual(offlineEpisodes.map(row => row.raw.episodeId).sort((a,b)=>a-b), [208,215,220,225,232,260,261,262,263,266]);
+assert.equal(episode.raw.episodeId,263);
+assert.equal(episode.raw.firstStageId,6126311);
+assert.equal(episode.raw.m_Shortcut,"EC_EVENT@263");
+assert.equal(episode.raw.LobbyResourceID,"LOBBY_THUMB_EPISODE_EVENT_DEBT");
+for (const date of ["2025-04-10T15:00:00Z","2026-10-10T07:00:00Z","2030-01-01T00:00:00Z"]) {
+  const state = manager.getActiveEventState(date);
+  assert(state.openTags.includes("TAG_COMMON_EPISODE_EVENT_DEBT"));
+  assert(state.openTags.includes("TAG_COMMON_DEFENCE_DUNGEON_23"),"both native event types coexist");
+  const summaryDate = state.intervalData.find(row => row.strKey === "DATE_EPISODE_SUMMARY_EVENT_DEBT");
+  assert(summaryDate.startDate <= new Date(date) && new Date(date) < summaryDate.endDate);
+  assert(!state.offlineModuleSuppressedIntervalStrKeys.includes(summaryDate.strKey),"a collection sharing the selected summary date cannot close the chapter");
+  for (const summary of manager.getRegistry().entries.filter(row => row.source.tableName === "EPISODE_SUMMARY_TEMPLET" && row.raw.m_EPCategory === "EC_EVENT")) {
+    if (offlineEpisodes.some(row => row.intervalTags.includes(summary.raw.DateStrID))) {
+      const window = state.intervalData.find(row => row.strKey === summary.raw.DateStrID);
+      assert(window.startDate <= new Date(date) && new Date(date) < window.endDate,"all ten seasonal summaries stay available offline");
+      continue;
+    }
+    assert.equal(state.intervalData.find(row => row.strKey === summary.raw.DateStrID).endDate.getUTCFullYear(),1999,"captured older/collaboration summaries cannot take the lobby banner");
+  }
+}
+const disabledEpisode = createEventManager({rootDir,env:{CS_EVENT_OFFLINE_EPISODE:"0"}}).getActiveEventState("2026-10-10");
+assert(!disabledEpisode.seedEntries.some(row => row.source.tableName === "OFFLINE_EPISODE_EVENT"));
+const summaries = manager.getRegistry().entries.filter(row => row.source.tableName === "EPISODE_SUMMARY_TEMPLET");
+const syntheticRegistry = {entries:summaries};
+const episodes = [{m_EpisodeID:263,m_Difficulty:"NORMAL",m_EPCategory:"EC_SEASONAL",m_OpenTag:"TAG_COMMON_EPISODE_EVENT_DEBT"}];
+const stages = [{m_EpisodeID:263,m_Difficulty:"NORMAL",m_ActID:1,m_StageIndex:1,m_StageID:6126311,m_StageBattleStrID:"debt-prologue"}];
+const dungeons = [{m_DungeonStrID:"debt-prologue"}];
+assert.equal(selectOfflineEpisodeEntries(syntheticRegistry,episodes,stages,dungeons)[0].raw.episodeId,263);
+assert.equal(selectOfflineEpisodeEntries(syntheticRegistry,episodes,stages,[]).length,0,"a banner without its first playable dungeon stays closed");
+assert.equal(selectOfflineEpisodeEntries(syntheticRegistry,[],stages,dungeons).length,0);
+assert.equal(selectOfflineEpisodeEntries(syntheticRegistry,episodes,[],dungeons).length,0);
+console.log("[limited-event] PASS lobby hourglass episode 263, complete native chapter prerequisites, dates/captured-summary isolation and disable; defence 23 and native handlers preserved");

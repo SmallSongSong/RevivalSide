@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { getGameplayTableRoots, listGameplayTableFiles, readGameplayTable } = require("../gameplay-jsons");
+const { getGameplayTableRoots, listGameplayTableFiles, readGameplayTable, readGameplayTableRecords } = require("../gameplay-jsons");
 
 const DATE_PROFILES_FILE = path.join(__dirname, "date-profiles.json");
 const DATE_PROFILE_TABLE_NAME = "EVENT_DATE_PROFILE";
@@ -21,6 +21,7 @@ const DEFAULT_EVENT_TABLES = Object.freeze([
   table("event", "ab_script", "LUA_EVENT_TAB_TEMPLET.json"),
   table("event", "ab_script", "LUA_DEFENCE_TEMPLET.json", { optional: true }),
   table("event", "ab_script", "LUA_EVENT_LOBBY_INDEX_TEMPLET.json"),
+  table("event", "ab_script", "LUA_EPISODE_SUMMARY_TEMPLET.json", { optional: true }),
   table("event", "ab_script", "LUA_EVENT_COLLECTION_INDEX_TEMPLET.json"),
   table("event", "ab_script", "LUA_EVENT_COLLECTION_MERGE_TEMPLET.json", { optional: true }),
   table("event", "ab_script", "LUA_EVENT_COLLECTION_TEMPLET.json", { optional: true }),
@@ -242,6 +243,13 @@ function createEventManager(options = {}) {
           rootDir, env, optional: true, logLabel: "event-manager",
         });
         cachedRegistry.offlineDefenceEntries = selectOfflineDefenceEntries(cachedRegistry, dungeonTable);
+      }
+      if (config.offlineEpisodeEnabled) {
+        const read = (directory, name) => readGameplayTableRecords(directory, name, { rootDir, env, optional: true, logLabel: "event-manager" });
+        cachedRegistry.offlineEpisodeEntries = selectOfflineEpisodeEntries(cachedRegistry,
+          read("ab_script", "LUA_EPISODE_TEMPLET_V2.json"),
+          read("ab_script", "LUA_STAGE_TEMPLET.json"),
+          read("ab_script_dungeon_templet", "LUA_DUNGEON_TEMPLET_BASE.json"));
       }
     }
     return cachedRegistry;
@@ -498,6 +506,7 @@ function resolveEventManagerConfig(options = {}) {
     defaultWindowDays: readPositiveInt(env.CS_EVENT_DEFAULT_WINDOW_DAYS, 28),
     officialScheduleEnabled: parseEnvBool(env.CS_EVENT_OFFICIAL_SCHEDULE, true),
     offlineDefenceEnabled: parseEnvBool(env.CS_EVENT_OFFLINE_DEFENCE, true),
+    offlineEpisodeEnabled: parseEnvBool(env.CS_EVENT_OFFLINE_EPISODE, true),
     dateProfilesEnabled: parseEnvBool(env.CS_EVENT_DATE_PROFILES, true),
     inferYearOnly: parseEnvBool(env.CS_EVENT_INFER_YEAR_ONLY, false),
     inferSeasonalIntervals: parseEnvBool(env.CS_EVENT_INFER_SEASONAL_INTERVALS, false),
@@ -1022,6 +1031,40 @@ function selectOfflineDefenceEntries(registry, dungeonTable) {
   return [];
 }
 
+// The lobby hourglass uses NKMEpisodeMgr.GetMainSummaryTemplet, not the
+// event-collection selector. It needs its own native summary date and episode.
+function selectOfflineEpisodeEntries(registry, episodes = [], stages = [], dungeons = []) {
+  const dungeonStrIds = new Set(dungeons.map(row => row.m_DungeonStrID));
+  const summaries = (registry.entries || []).filter(entry => entry.source.tableName === "EPISODE_SUMMARY_TEMPLET"
+    && entry.raw.m_EPCategory === "EC_EVENT" && entry.raw.DateStrID
+    && entry.raw.m_ShortcutType === "SHORTCUT_OPERATION"
+    // Removed collaboration assets/strings are not a complete offline event.
+    && !/_CLB/.test(entry.raw.DateStrID))
+    .sort((a, b) => Number(Boolean(b.raw.LobbyResourceID)) - Number(Boolean(a.raw.LobbyResourceID))
+      || Number(b.raw.INDEX) - Number(a.raw.INDEX));
+  const selected = [];
+  for (const summary of summaries) {
+    const episodeId = Number(summary.raw.EpisodeID);
+    const episode = episodes.find(row => Number(row.m_EpisodeID) === episodeId && row.m_Difficulty === "NORMAL" && row.m_OpenTag);
+    const firstStage = stages.find(row => Number(row.m_EpisodeID) === episodeId && row.m_Difficulty === "NORMAL"
+      && Number(row.m_ActID) === 1 && Number(row.m_StageIndex) === 1 && dungeonStrIds.has(row.m_StageBattleStrID));
+    if (!episode || !firstStage || summary.raw.m_Shortcut !== `EC_EVENT@${episodeId}`) continue;
+    const startDate = new Date(Date.UTC(2000, 0, 1));
+    const endDate = new Date(Date.UTC(2099, 11, 31, 23, 59, 59));
+    if (episode.m_EPCategory !== "EC_SEASONAL") continue;
+    selected.push({
+      ...summary, id: `offline-episode:${episodeId}`, label: `Offline native event episode ${episodeId}`,
+      openTags: uniqueStrings([...summary.openTags, episode.m_OpenTag, firstStage.m_OpenTag]),
+      intervalTags: uniqueStrings([...summary.intervalTags, episode.m_DateStrID]),
+      startDate, endDate, resolvedStartDate: startDate, resolvedEndDate: endDate,
+      repeatStartDay: 0, repeatEndDay: 0, resolvedRepeatStartDay: 0, resolvedRepeatEndDay: 0,
+      source: { ...summary.source, tableName: "OFFLINE_EPISODE_EVENT", relativePath: "__offline_episode__" },
+      raw: { ...summary.raw, episodeId, firstStageId: Number(firstStage.m_StageID) },
+    });
+  }
+  return selected;
+}
+
 function buildActiveEventState(registry, config = {}, date = config.eventDate) {
   const targetDate = parseEventDateInput(date);
   const empty = {
@@ -1043,6 +1086,7 @@ function buildActiveEventState(registry, config = {}, date = config.eventDate) {
   const offlineDefenceSeeds = config.offlineDefenceEnabled
     ? (registry.offlineDefenceEntries || [])
     : [];
+  const offlineEpisodeSeeds = config.offlineEpisodeEnabled ? (registry.offlineEpisodeEntries || []) : [];
   const explicitSeeds = selectRegistryEntriesForDate(registry, targetDate);
   const officialScheduleSeeds = selectOfficialScheduleEntries(registry, targetDate, config);
   const profileSeeds = selectDateProfileEntries(targetDate, config);
@@ -1060,6 +1104,7 @@ function buildActiveEventState(registry, config = {}, date = config.eventDate) {
   ]);
   const expandableSeeds = uniqueEntries([
     ...offlineDefenceSeeds,
+    ...offlineEpisodeSeeds,
     ...counterPassSeeds,
     ...explicitSeeds,
     ...profileSeeds,
@@ -1096,8 +1141,15 @@ function buildActiveEventState(registry, config = {}, date = config.eventDate) {
   const offlineModuleSuppressedIntervalStrKeys = offlineDefenceSeeds.length
     ? uniqueStrings(registry.entries.filter((entry) => ["EVENT_COLLECTION_INDEX_TEMPLET", "DEFENCE_TEMPLET"].includes(entry.source.tableName))
         .flatMap((entry) => entry.intervalTags))
-        .filter((key) => !offlineDefenceSeeds.some((entry) => entry.intervalTags.includes(key)))
+        .filter((key) => ![...offlineDefenceSeeds, ...offlineEpisodeSeeds].some((entry) => entry.intervalTags.includes(key)))
     : [];
+  if (offlineEpisodeSeeds.length) {
+    offlineModuleSuppressedIntervalStrKeys.push(...uniqueStrings(registry.entries
+      .filter(entry => entry.source.tableName === "EPISODE_SUMMARY_TEMPLET" && entry.raw.m_EPCategory === "EC_EVENT")
+      .flatMap(entry => entry.intervalTags))
+      .filter(key => ![...offlineDefenceSeeds, ...offlineEpisodeSeeds].some(entry => entry.intervalTags.includes(key))
+        && !offlineModuleSuppressedIntervalStrKeys.includes(key)));
+  }
   // Captured JOIN_LOBBY data can retain older active module windows. The native
   // lobby selects the first open collection, including unsupported old prefabs.
   // 1999 is an explicit closure. The native merge preserves captured timing
@@ -2414,4 +2466,5 @@ module.exports = {
   resolveEventManagerConfig,
   selectRegistryEntriesForDate,
   selectOfflineDefenceEntries,
+  selectOfflineEpisodeEntries,
 };
