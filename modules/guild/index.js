@@ -505,7 +505,11 @@ function guildBossMaxHp(dungeonId) {
 function buildGuildSeasonIntervals(ctx, user) {
   const store = ensureGuildStore(ctx);
   const guild = user && store[String(user.guildUid || 0)];
-  return cooperative.buildSeasonIntervals(ctx, guild || null, { guildBossMaxHp });
+  try { return cooperative.buildSeasonIntervals(ctx, guild || null, { guildBossMaxHp }); }
+  catch (failure) {
+    console.log(`[guild:bootstrap] calendar unavailable code=${failure.errorCode || 20191}; seasonRows=${cooperative.catalog().seasons.length} scheduleRows=${cooperative.catalog().schedules.length}`);
+    return [];
+  }
 }
 
 function prepareGuildArenaGameLoad(ctx, user, req) {
@@ -530,7 +534,8 @@ function completeGuildBattle(ctx, user, game, state, options = {}) {
 
 function cancelGuildBattle(ctx, user, game = null) {
   if (!user || toBigInt(user.guildUid) === 0n) return null;
-  const guild = requireGuild(ctx, user, user.guildUid);
+  const guild = ctx.userDb && ctx.userDb.guilds && ctx.userDb.guilds[String(user.guildUid)];
+  if (!guild || !Array.isArray(guild.members) || !guild.members.some(member => String(member.commonProfile && member.commonProfile.userUid) === String(user.userUid))) return null;
   const result = cooperative.cancelBattle(ctx, user, guild, game, { guildBossMaxHp });
   if (!result) return null;
   if (ctx.config && ctx.config.USE_LOCAL_USER_DB && ctx.saveUserDb) ctx.saveUserDb();

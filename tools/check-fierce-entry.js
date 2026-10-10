@@ -7,6 +7,7 @@ const vm = require("node:vm");
 const codec = require("../modules/packet-codec");
 const { readGameplayTableRecords } = require("../modules/gameplay-jsons");
 const rootDir = path.resolve(__dirname, "..");
+let selectedSeasonId = 0;
 const source = fs.readFileSync(path.join(rootDir, "server/listener.js"), "utf8");
 function extract(name) {
   const start = source.indexOf(`function ${name}(`);
@@ -18,7 +19,8 @@ const cycleMatch = source.match(/const FIERCE_ROTATION_GAME_DAYS = ([\s\S]*?);/)
 assert(cycleMatch);
 const sandbox = {
   fierceRecords: require("../modules/misc-stages/fierce-result"),
-  ...codec, Buffer, process: { env: {} }, cachedMiscStageCatalog: null,
+  ...codec, Buffer, fs, process: { env: {} }, cachedMiscStageCatalog: null,
+  fierceSelector: { getActiveSeasonId: () => selectedSeasonId, selectionPath: "/nonexistent/revivalside-fierce-selection.json" },
   FIERCE_DAY_MS: 86400000, FIERCE_ROTATION_ANCHOR_ISO: "2025-10-01T03:00:00.000Z", FIERCE_ROTATION_CYCLE_DAYS: 14,
   now: new Date("2025-04-10T14:22:54.926Z"),
   getServerNowDate: () => sandbox.now,
@@ -82,6 +84,41 @@ handler.handle(ctx, socket, {});
 seasonId++;
 handler.handle(ctx, socket, {});
 assert.deepEqual(sent, [854, 845, 845, 854, 845], "season manager must initialize before boss data without resetting selected difficulty on each refresh");
+const selectorArg = process.argv.indexOf("--selector-fixtures");
+if (selectorArg >= 0) {
+  const output = process.argv[selectorArg + 1];
+  assert(output && !output.startsWith("--"), "--selector-fixtures requires an output path");
+  const selector = require("../modules/fierce-selection").createFierceSelector({ rootDir, selectionPath: "/nonexistent/revivalside-fierce-selection.json" });
+  const choices = selector.listOptions();
+  assert.equal(choices.length, 19, "native selector fixture must cover every supported Chinese Boss");
+  const selectedFixtures = [];
+  const selectedSeasons = [];
+  sandbox.now = new Date("2026-10-10T06:00:00.000Z");
+  for (const choice of choices) {
+    selectedSeasonId = choice.seasonId;
+    const season = sandbox.getCurrentFierceSeasonRow();
+    assert.equal(season.FierceID, choice.seasonId, "running listener must resolve the exact selected season");
+    const rows = sandbox.getFierceSeasonBossRows();
+    assert.deepEqual(Array.from(rows, row => Number(row.FierceBossID)).sort((a, b) => a - b), choice.bosses.map(boss => boss.bossId).sort((a, b) => a - b));
+    assert(sandbox.buildFierceSeasonNotPayload().equals(codec.writeSignedVarInt(choice.seasonId)), "854 must contain the selected season");
+    for (const boss of choice.bosses) {
+      const row = rows.find(row => row.FierceBossID === boss.bossId);
+      assert.equal(row.DungeonID, boss.dungeonId);
+      assert.equal(row.Level, boss.difficulty);
+      assert(dungeonIds.has(boss.dungeonId), `selected ${choice.name} dungeon ${boss.dungeonId} is absent`);
+    }
+    selectedSeasons.push(season);
+    selectedFixtures.push({ date: `${choice.name} (${choice.seasonId})`, seasonId: season.FierceID,
+      openTag: season.m_OpenTag, groupId: season.FierceBossGroupID_1, bosses: rows,
+      seasonPayload: sandbox.buildFierceSeasonNotPayload().toString("base64"),
+      dataPayload: sandbox.buildFierceDataAckPayload().toString("base64"),
+      rankPayload: sandbox.buildLeaderboardFierceBossGroupListAckPayload({ fierceBossGroupId: season.FierceBossGroupID_1 }, {}).toString("base64") });
+  }
+  selectedSeasonId = 0;
+  fs.writeFileSync(output, JSON.stringify({ fixtures: selectedFixtures, seasons: selectedSeasons,
+    bosses: Array.from(sandbox.loadMiscStageCatalog().fierceBossById.values()) }));
+  console.log(`Fierce selector fixtures generated: ${choices.length} Chinese Boss choices, ${selectedFixtures.reduce((total, fixture) => total + fixture.bosses.length, 0)} real difficulty/dungeon routes.`);
+}
 const fixtureArg = process.argv.indexOf("--fixtures");
 if (fixtureArg >= 0) fs.writeFileSync(process.argv[fixtureArg + 1], JSON.stringify({ fixtures, seasons, bosses: Array.from(sandbox.loadMiscStageCatalog().fierceBossById.values()) }));
 console.log(`Fierce entry checks passed: ${seasons.length} production seasons, ${bosses} boss routes, ${fixtures.length} clock windows, season/data ordering.`);

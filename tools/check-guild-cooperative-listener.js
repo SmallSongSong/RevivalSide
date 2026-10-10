@@ -132,7 +132,7 @@ function runCase(kind) {
     assert(result && result.maxHp > 0 && result.damage > 0);
     assert.equal(result.curHP, stage.guildBossMaxHp * .75);
     assert.equal(h.counters.raidResult[0].args[0], result);
-    assert.equal(after.bossData.playCount, kind === "practice" ? info.bossData.playCount : info.bossData.playCount - 1);
+    assert.equal(after.bossData.playCount, info.bossData.playCount,"formal and practice entries stay available after settlement");
     assert.equal(after.bossData.remainHp, kind === "practice" ? info.bossData.remainHp : result.curHP);
   }
   assert.equal(h.sandbox.buildDynamicGameEndNotPayload(replay, { user: h.user, win: false }), payload, "cached 811 must preserve its authoritative result");

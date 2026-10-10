@@ -20,6 +20,8 @@ const sent = [];
 let stopped = 0;
 const sandbox = {
   ...codec, Buffer, USE_LOCAL_USER_DB: false,
+  defenceScore: require("../modules/event-manager/defence-score"),
+  defenceRewards: require("../modules/event-manager/defence-rewards"),
   extractManagedBattleRecords: (meta) => meta.battleRecords || [],
   extractManagedBattlePlayTime: (meta) => meta.battlePlayTime || 0,
   extractManagedBattleWin: (meta) => meta.battleWin ?? null,
@@ -59,13 +61,13 @@ assert(sandbox.sendDefenceGameEnd(socket));
 assert.equal(sent.length, 1, "a Defence result is settled and sent once");
 assert.equal(sent[0].id, 3906, "use the Defence result protocol, rather than generic 811");
 assert.equal(stopped, 1);
-assert.equal(user.miscStages.defence[1].bestScore, 13, "local score counts actual enemy deaths");
+assert.equal(user.miscStages.defence[1].bestScore, 1300, "offline defence score counts actual enemy deaths");
 assert.equal(socket.session.gameReplay.dynamicBattleResultSent, true);
 assert(sandbox.sendDefenceGameEnd(socketWithScore(4)));
-assert.equal(user.miscStages.defence[1].bestScore, 13, "a lower later score preserves the record");
+assert.equal(user.miscStages.defence[1].bestScore, 1300, "a lower later score preserves the record");
 const info = sandbox.buildDefenceInfoAckPayload(1, user);
 let offset = 0;
-for (const value of [0, 1, 13]) {
+for (const value of [0, 1, 1300]) {
   const decoded = codec.readSignedVarInt(info, offset);
   assert.equal(decoded.value, value);
   offset = decoded.offset;
@@ -87,7 +89,7 @@ const userBeforeRewards = JSON.stringify(user);
 for (const id of [3907, 3911, 3913]) {
   let response;
   handlers.get(id).handle({ sendGameResponse: (_socket, _packet, _id, payload) => { response = payload; } }, { session: { user } }, {});
-  assert.equal(codec.readSignedVarInt(response).value, 1, "unimplemented official seasonal rewards return an error");
+  assert.equal(codec.readSignedVarInt(response).value, 1, "reward requests without an active activity cannot mutate inventory");
 }
 assert.equal(JSON.stringify(user), userBeforeRewards);
 

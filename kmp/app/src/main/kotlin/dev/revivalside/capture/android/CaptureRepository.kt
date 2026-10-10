@@ -140,6 +140,7 @@ internal object CaptureRepository {
             "server-data/users.sqlite",
             "server-data/active-user.json",
             "server-data/server-time.json",
+            "server-data/fierce-selection.json",
             "logs/android-listener.log",
             "logs/node-listener.log",
         )

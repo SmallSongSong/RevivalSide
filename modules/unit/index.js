@@ -199,7 +199,7 @@ function buildPlayerDeckForGameLoad(user, req = {}, options = {}) {
     shipLevel: ship ? Number(ship.level || 1) : 1,
     shipSkinId: ship ? Number(ship.skinId || 0) : 0,
     shipLimitBreakLevel: ship ? Number(ship.limitBreakLevel || 0) : 0,
-    shipSkillLevels: ship ? normalizeSkillLevels(ship.skillLevels) : [],
+    shipSkillLevels: ship ? shipSkillLevelsForUnit(ship.unitId) : [],
     shipCommandModules: ship ? normalizeShipCommandModules(ship.shipCommandModules || ship.shipModules) : [],
     operatorUid: operator ? String(toBigInt(operator.uid || operator.operatorUid || 0)) : "0",
     operatorId: operator ? Number(operator.id || operator.unitId || 0) : 0,
@@ -916,7 +916,7 @@ function normalizeUnit(value) {
     level: Number(value.level || value.m_UnitLevel || 1),
     exp: Number(value.exp || value.m_iUnitLevelEXP || 0),
     statExp: normalizeFixedArray(value.statExp || value.m_listStatEXP, 6, 0),
-    skillLevels: normalizeSkillLevels(value.skillLevels || value.m_aUnitSkillLevel),
+    skillLevels: getUnitTemplet(unitId)?.m_NKM_UNIT_TYPE === "NUT_SHIP" ? shipSkillLevelsForUnit(unitId) : normalizeSkillLevels(value.skillLevels || value.m_aUnitSkillLevel),
     equipItemUids: normalizeFixedArray(value.equipItemUids || value.m_EquipItemList, 4, 0),
     shipCommandModules: normalizeShipCommandModules(value.shipCommandModules || value.ShipCommandModule || value.shipModules),
     maxLevelOverride: Number(value.maxLevelOverride || 0) || 0,
@@ -1403,9 +1403,14 @@ function normalizeFixedArray(values, length, fallback) {
   return result;
 }
 
+function shipSkillLevelsForUnit(unitId) {
+  const templet = getUnitTemplet(unitId);
+  // Ship upgrades select the enhanced skill templates; each present skill uses level 1.
+  return [1, 2, 3, 4, 5].map(index => templet && templet[`m_SkillStrID${index}`] ? 1 : 0);
+}
+
 function normalizeShipCommandModules(values) {
-  const modules = Array.isArray(values) && values.length ? values.slice(0, 2) : [null, null];
-  while (modules.length < 2) modules.push(null);
+  const modules = Array.isArray(values) ? values.slice(0, 3) : [null, null];
   return modules.map((module, moduleIndex) => {
     const source = module && typeof module === "object" ? module : {};
     const slots = Array.isArray(source.slots) && source.slots.length ? source.slots.slice(0, 2) : [null, null];

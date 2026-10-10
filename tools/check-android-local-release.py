@@ -26,6 +26,17 @@ def verify(apk_path, report_path):
         for name, expected in report["shellFiles"].items():
             if sha(apk.read(name)) != expected:
                 raise ValueError(f"Released Android shell changed: {name}")
+        if report.get("compiledUi"):
+            ui = report["compiledUi"]
+            for name, expected in ui["sourceFiles"].items():
+                if sha((ROOT / name).read_bytes()) != expected:
+                    raise ValueError(f"Android UI source changed since compilation: {name}")
+            dex_names = {name for name in apk.namelist() if re.fullmatch(r"classes(?:\d+)?\.dex", name)}
+            if dex_names != set(ui["dexFiles"]):
+                raise ValueError("APK retains obsolete DEX or omits compiled UI")
+            for name, expected in ui["dexFiles"].items():
+                if sha(apk.read(name)) != expected:
+                    raise ValueError(f"Compiled Android UI not embedded: {name}")
         if sha(apk.read("AndroidManifest.xml")) != report["manifestSha256"]:
             raise ValueError("Updated Android manifest differs from the packaging report")
         for path in sorted(assets.rglob("*")):
@@ -83,7 +94,8 @@ def verify(apk_path, report_path):
         platform_manifest = json.loads(apk.read("assets/revivalside-platform-manifest.json"))
         if platform_hash != report["platformTreeSha256"] or platform_manifest["treeSha256"] != platform_hash:
             raise ValueError("Platform tree manifest mismatch")
-    print(f"PASS: {apk_path.name}; {len(report['sourceFiles'])} sources; both Android combat hosts; {len(report['nativeLibraries'])} native libraries; inherited {report['shellRelease']} UI; all staged assets")
+    ui_label = "compiled Kotlin UI" if report.get("compiledUi") else f"inherited {report['shellRelease']} UI"
+    print(f"PASS: {apk_path.name}; {len(report['sourceFiles'])} sources; both Android combat hosts; {len(report['nativeLibraries'])} native libraries; {ui_label}; all staged assets")
 
 
 if __name__ == "__main__":

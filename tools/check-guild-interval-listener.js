@@ -39,6 +39,8 @@ const retained={key:700001,strKey:"DATE_SYNTHETIC_OTHER_EVENT",startDate:new Dat
 const sandbox={...codec,Buffer,Date,Map,Set,Array,dateTimeBinaryForDate,
   buildGuildSeasonIntervals:guild.buildGuildSeasonIntervals,createPacketContext:()=>ctx,getServerNowDate:()=>clock,
   buildEventIntervalDataList:()=>[retained],buildEventShopIntervalDataList:()=>[],buildFierceSeasonIntervalDataList:()=>[],buildSerializedAttendanceIntervalDataList:()=>[],
+  getSelectableFierceSeasonRows:()=>[],
+  getSelectableFierceSeasonIntervalStrKeys:()=>[],
   REQUIRED_INTERVAL_TAGS:[expected.strKey,"DATE_SYNTHETIC_REQUIRED"],
 };
 vm.createContext(sandbox);

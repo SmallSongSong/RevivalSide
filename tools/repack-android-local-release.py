@@ -143,15 +143,31 @@ def build(args):
     if report["version"] != args.version or report["upstreamApkSha256"] != UPSTREAM_SHA:
         raise ValueError("Backend staging report does not match this build")
     assets = ROOT / "kmp/app/src/main/assets"
+    compiled_ui = None
+    if args.compiled_ui:
+        compiled_ui = json.loads((args.compiled_ui / "ui-manifest.json").read_text())
+        for name, expected in compiled_ui["sourceFiles"].items():
+            if digest_file(ROOT / name) != expected:
+                raise ValueError(f"UI source changed since compilation: {name}")
+        for name, expected in compiled_ui["dexFiles"].items():
+            if not re.fullmatch(r"classes(?:\d+)?\.dex", name) or digest_file(args.compiled_ui / "dex" / name) != expected:
+                raise ValueError(f"Invalid compiled UI DEX: {name}")
+        report["compiledUi"] = compiled_ui
+        report["shellFiles"] = {name: value for name, value in report["shellFiles"].items() if not re.fullmatch(r"classes(?:\d+)?\.dex", name)}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(args.upstream_apk) as source, zipfile.ZipFile(args.output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as target:
         manifest = update_manifest(source.read("AndroidManifest.xml"), args.version, args.version_code)
         for entry in source.infolist():
             if entry.is_dir() or is_signature(entry.filename) or entry.filename.startswith("assets/revivalside-"):
                 continue
+            if compiled_ui and re.fullmatch(r"classes(?:\d+)?\.dex", entry.filename):
+                continue
             info = copy.copy(entry)
             info.extra = b""  # zipalign recreates alignment after packaging.
             target.writestr(info, manifest if entry.filename == "AndroidManifest.xml" else source.read(entry))
+        if compiled_ui:
+            for name in compiled_ui["dexFiles"]:
+                target.writestr(name, (args.compiled_ui / "dex" / name).read_bytes())
         for path in sorted(assets.rglob("*")):
             if not path.is_file() or not path.relative_to(assets).as_posix().startswith("revivalside-"):
                 continue
@@ -161,7 +177,8 @@ def build(args):
             target.writestr(info, path.read_bytes())
     report.update({"versionCode": args.version_code, "manifestSha256": hashlib.sha256(manifest).hexdigest()})
     args.report.write_text(json.dumps(report, indent=2) + "\n")
-    print(f"Rebuilt unsigned APK with inherited {report['shellRelease']} UI: {args.output}")
+    ui = "compiled Kotlin UI" if compiled_ui else f"inherited {report['shellRelease']} UI"
+    print(f"Rebuilt unsigned APK with {ui}: {args.output}")
 
 
 if __name__ == "__main__":
@@ -171,4 +188,5 @@ if __name__ == "__main__":
     parser.add_argument("--version", default="0.4.3a")
     parser.add_argument("--version-code", type=int, default=15)
     parser.add_argument("--report", type=Path, default=ROOT / "exports/android-local-build.json")
+    parser.add_argument("--compiled-ui", type=Path)
     build(parser.parse_args())

@@ -1,0 +1,82 @@
+{
+  "source": "冻结 9.2c 客户端 LUA_STRING_TWN.luac，按 Lua 十进制字节转 UTF-8 解码；简体为同名繁简转换",
+  "sourceSha256": "e5640154889545c307d6b4b6bb364d7dc7a39bec8132cebe6c66cc1ec9a6f22f",
+  "names": {
+    "SI_BOSS_TITLE_01": {
+      "traditional": "仲裁者 TYPE A",
+      "simplified": "仲裁者 TYPE A"
+    },
+    "SI_BOSS_TITLE_02": {
+      "traditional": "仲裁者 TYPE B",
+      "simplified": "仲裁者 TYPE B"
+    },
+    "SI_BOSS_TITLE_03": {
+      "traditional": "尼爾比耶",
+      "simplified": "尼尔比耶"
+    },
+    "SI_BOSS_TITLE_04": {
+      "traditional": "索爾奇塔提奧",
+      "simplified": "索尔奇塔提奥"
+    },
+    "SI_BOSS_TITLE_05": {
+      "traditional": "暴君的裝甲",
+      "simplified": "暴君的装甲"
+    },
+    "SI_BOSS_TITLE_06": {
+      "traditional": "暴君的長劍",
+      "simplified": "暴君的长剑"
+    },
+    "SI_BOSS_TITLE_07": {
+      "traditional": "騎士再生體",
+      "simplified": "骑士再生体"
+    },
+    "SI_BOSS_TITLE_08": {
+      "traditional": "大主教再生體",
+      "simplified": "大主教再生体"
+    },
+    "SI_BOSS_TITLE_09": {
+      "traditional": "克隆·帝皇",
+      "simplified": "克隆·帝皇"
+    },
+    "SI_BOSS_TITLE_S2_01": {
+      "traditional": "八岐大蛇",
+      "simplified": "八岐大蛇"
+    },
+    "SI_BOSS_TITLE_S2_02": {
+      "traditional": "女高音",
+      "simplified": "女高音"
+    },
+    "SI_BOSS_TITLE_S2_03": {
+      "traditional": "湖水騎士",
+      "simplified": "湖水骑士"
+    },
+    "SI_BOSS_TITLE_S2_04": {
+      "traditional": "機械·我宇宙無敵帥",
+      "simplified": "机械·我宇宙无敌帅"
+    },
+    "SI_BOSS_TITLE_S3_01": {
+      "traditional": "伐樓拿之艦",
+      "simplified": "伐楼拿之舰"
+    },
+    "SI_BOSS_TITLE_S3_02": {
+      "traditional": "蠶食",
+      "simplified": "蚕食"
+    },
+    "SI_BOSS_TITLE_S4_01": {
+      "traditional": "三獸之虎",
+      "simplified": "三兽之虎"
+    },
+    "SI_BOSS_TITLE_S4_02": {
+      "traditional": "救贖騎士團",
+      "simplified": "救赎骑士团"
+    },
+    "SI_BOSS_TITLE_S4_03": {
+      "traditional": "墮落的冬季莫爾斯",
+      "simplified": "堕落的冬季莫尔斯"
+    },
+    "SI_BOSS_TITLE_S4_04": {
+      "traditional": "緋莉克絲",
+      "simplified": "绯莉克丝"
+    }
+  }
+}

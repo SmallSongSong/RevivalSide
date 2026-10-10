@@ -1,6 +1,7 @@
 package dev.revivalside.capture.android
 
 import android.app.Notification
+import android.app.ActivityManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -27,7 +28,12 @@ class RevivalSideListenerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) stopListener() else startListener()
+        if (intent?.action == ACTION_STOP) {
+            stopListener()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        startListener()
         return START_STICKY
     }
 
@@ -148,6 +154,11 @@ class RevivalSideListenerService : Service() {
     }
 
     companion object {
+        @Suppress("DEPRECATION")
+        fun isRunning(context: Context): Boolean = runCatching {
+            context.getSystemService(ActivityManager::class.java).getRunningServices(128)
+                .any { it.service.className == RevivalSideListenerService::class.java.name && it.started }
+        }.getOrDefault(false)
         const val CHANNEL_ID = "revivalside_listener"
         const val NOTIFICATION_ID = 6002
         const val ACTION_START = "dev.revivalside.listener.START"
@@ -244,6 +255,7 @@ private class NodeProcessRuntime(
             }
             env["CS_PORT"] = settings.gamePort.toString()
             env["CS_HTTP_MIRROR_PORT"] = settings.httpPort.toString()
+            env["CS_REWRITE_CAPTURED_SERVER_INFO"] = "1"
             env["CS_HTTP_MIRROR_HOST"] = "127.0.0.1"
             env["CS_USER_DB_PATH"] = File(dataDir, "users.json").absolutePath
             env["CS_SERVER_TIME_STATE_PATH"] = File(dataDir, "server-time.json").absolutePath
@@ -416,6 +428,7 @@ private class NodeProcessRuntime(
                 });
                 process.env.CS_PORT = ${jsString(settings.gamePort.toString())};
                 process.env.CS_HTTP_MIRROR_PORT = ${jsString(settings.httpPort.toString())};
+                process.env.CS_REWRITE_CAPTURED_SERVER_INFO = "1";
                 process.env.CS_HTTP_MIRROR_HOST = "127.0.0.1";
                 process.env.CS_HTTP_MIRROR_BASE_URL = ${jsString("http://127.0.0.1:${settings.httpPort}")};
                 process.env.CS_ANDROID_CLIENT_CDN_BASE_URL = ${jsString(androidClientCdnBaseUrl)};

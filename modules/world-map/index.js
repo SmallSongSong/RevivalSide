@@ -153,7 +153,7 @@ function createWorldMapHandlers() {
       if ((response.raidStateRefresh || RAID_SNAPSHOT_PACKET_IDS.has(packetId)) && typeof ctx.sendServerGamePacket === "function") {
         sendRaidSnapshotData(ctx, socket, user, {
           now,
-          includeWorldMap: packetId === 2200,
+          includeWorldMap: packetId === 2200 || response.worldMapStateRefresh,
           worldMapLabel: `world-map-${packetId}-world-map-data`,
           label: `world-map-${packetId}-my-raid-list`,
           detailLabel: `world-map-${packetId}-raid-detail`,
@@ -192,7 +192,7 @@ function buildPacketResponse(user, packetId, req, options = {}) {
         writeSignedVarInt(result.city.cityID),
         writeSignedVarInt(result.missionID),
         writeSignedVarLong(result.completeTime),
-      ]);
+      ], { raidStateRefresh: Boolean(result.worldMapEventGroup), worldMapStateRefresh: Boolean(result.worldMapEventGroup) });
     }
     case 2008: {
       const city = cancelWorldMapMission(user, req.cityID, options);
@@ -940,7 +940,10 @@ function startWorldMapMission(user, cityID, missionID, options = {}) {
   city.mission.currentMissionID = selectedMissionID;
   city.mission.startDate = String(nowBinary);
   city.mission.completeTime = String(completeTime);
-  return { city, missionID: selectedMissionID, completeTime };
+  const worldMapEventGroup = mission && envFlagDefault(true, "CS_WORLDMAP_FORCE_RAID")
+    ? maybeSpawnRaidEvent(user, city, mission, options)
+    : null;
+  return { city, missionID: selectedMissionID, completeTime, worldMapEventGroup };
 }
 
 function cancelWorldMapMission(user, cityID, options = {}) {
@@ -1055,25 +1058,26 @@ function grantMissionReward(user, mission, options = {}) {
 }
 
 function maybeSpawnRaidEvent(user, city, mission, options = {}) {
-  // Check if city already has an active raid event
+  // Preserve an existing encounter while the branch is dispatched again.
   const existingEventUid = toBigInt(city.eventGroup && city.eventGroup.eventUid);
   if (existingEventUid > 0n) {
     const state = ensureBareWorldMapState(user, options);
     const existingRaid = state.raids[String(existingEventUid)];
     if (existingRaid && Number(existingRaid.curHP || 0) > 0) {
-      // City already has an active raid, don't spawn a new one
       return city.eventGroup;
     }
+    if (state.dive.active && Number(state.dive.active.cityID) === city.cityID && String(state.dive.active.diveUid) === String(existingEventUid)) return city.eventGroup;
   }
 
   const chanceFromEnv = process.env.CS_WORLDMAP_RAID_CHANCE;
   const tableChance = Number(mission && mission.m_WorldmapEventRatio) || 0;
   const searchBonus = getCityBuildingStatValue(city, "CBS_RAID_SEARCH_RATE");
   const chance = chanceFromEnv == null ? clampNumber(tableChance + searchBonus, 0, 100) : clampNumber(Number(chanceFromEnv) || 0, 0, 100);
-  if (chance <= 0 && !envFlag("CS_WORLDMAP_FORCE_RAID")) return null;
+  const forceRaid = envFlagDefault(true, "CS_WORLDMAP_FORCE_RAID");
+  if (chance <= 0 && !forceRaid) return null;
   const seed = `${city.cityID}:${mission && mission.m_WorldmapMissionID}:${city.exp}:${dayKeyFromTicks(ticksNow(options))}`;
   const roll = hashString(seed) % 100;
-  if (!envFlag("CS_WORLDMAP_FORCE_RAID") && roll >= chance) return null;
+  if (!forceRaid && roll >= chance) return null;
 
   const selection = selectWorldMapRaidEvent(city, mission, seed);
   const event = selection.event;

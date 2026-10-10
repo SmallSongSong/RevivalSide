@@ -30,6 +30,7 @@ try
     var mismatchCount = 0;
     var decodedUnits = 0;
     var decodedEquipment = 0;
+    var decodedOperators = 0;
 
     foreach (var entry in input.RootElement.GetProperty("units").EnumerateArray())
     {
@@ -40,6 +41,13 @@ try
             Require(uid == JsonNumber(expectedUid), "Decoded unit UID differs from the source fixture.");
         Require(Number(unit, "m_UnitID") > 0, "Unit template ID is zero.");
         Require(Get(unit, "m_EquipItemList") is Array { Length: 4 }, "Decoded unit does not have four equipment slots.");
+        if (entry.TryGetProperty("shipModuleCount", out var moduleCount))
+        {
+            Require(((IEnumerable)Get(unit, "ShipCommandModule")!).Cast<object>().Count() == moduleCount.GetInt32(), "Decoded ship module count differs from the source fixture.");
+            Require(Number(unit, "m_UnitID") == JsonNumber(entry.GetProperty("id"))
+                && Number(unit, "m_UnitLevel") == JsonNumber(entry.GetProperty("level"))
+                && Number(unit, "m_LimitBreakLevel") == JsonNumber(entry.GetProperty("limitBreakLevel")), "Decoded ship growth differs from the source fixture.");
+        }
         if (entry.ValueKind == JsonValueKind.Object && entry.TryGetProperty("equipmentUids", out var expectedSlots))
             Require(((Array)Get(unit, "m_EquipItemList")!).Cast<object>().Select(Convert.ToInt64)
                 .SequenceEqual(expectedSlots.EnumerateArray().Select(JsonNumber)), "Decoded equipment slot order differs from the source fixture.");
@@ -74,7 +82,28 @@ try
         var owner = Number(pair.Value, "m_OwnerUnitUID");
         Require(owner <= 0 || units.ContainsKey(owner) && assigned.Contains(pair.Key), "Decoded owned equipment lacks a matching unit slot.");
     }
+    if (input.RootElement.TryGetProperty("operators", out var operatorEntries))
+    {
+        var operatorUids = new HashSet<long>();
+        foreach (var entry in operatorEntries.EnumerateArray())
+        {
+            var op = Decode("NKM.NKMOperator", entry, "operator", decodedOperators++);
+            var uid = Number(op, "uid");
+            Require(uid > 0 && operatorUids.Add(uid), "Operator UID is zero or duplicated.");
+            Require(uid == JsonNumber(entry.GetProperty("uid")), "Decoded operator UID differs from the source fixture.");
+            Require(Number(op, "id") == JsonNumber(entry.GetProperty("id")), "Decoded operator ID differs from the source fixture.");
+            Require(Number(op, "level") == JsonNumber(entry.GetProperty("level")), "Decoded operator level differs from the source fixture.");
+            foreach (var skillName in new[] { "mainSkill", "subSkill" })
+            {
+                var skill = Get(op, skillName)!;
+                var expected = entry.GetProperty(skillName);
+                Require(Number(skill, "id") == JsonNumber(expected.GetProperty("id"))
+                    && Number(skill, "level") == JsonNumber(expected.GetProperty("level")), "Decoded operator skill differs from the source fixture.");
+            }
+        }
+    }
     Console.WriteLine($"Original inventory protocol: units={decodedUnits} equipment={decodedEquipment} equippedSlots={slotCount} roundTripMismatches={mismatchCount}.");
+    if (decodedOperators > 0) Console.WriteLine($"Original operator protocol: operators={decodedOperators} roundTripMismatches={mismatchCount}.");
     return mismatchCount == 0 ? 0 : 1;
 
     object Decode(string typeName, JsonElement source, string kind, int index)

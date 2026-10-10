@@ -1,4 +1,4 @@
-const { writeSignedVarInt, writeNullObject, writeIntList } = require("../modules/packet-codec");
+const { writeSignedVarInt } = require("../modules/packet-codec");
 
 module.exports = [{
   packetId: 3902,
@@ -16,12 +16,5 @@ module.exports = [{
 }, ...[3907, 3911, 3913].map((packetId) => ({
   packetId,
   name: "DEFENCE_SEASON_REWARD_REQ",
-  handle(ctx, socket, packet) {
-    const suffix = packetId === 3911 ? [writeSignedVarInt(0)] : [];
-    const payload = packetId === 3913
-      ? Buffer.concat([writeSignedVarInt(1), writeIntList([]), writeNullObject()])
-      : Buffer.concat([writeSignedVarInt(1), writeNullObject(), ...suffix]);
-    ctx.sendGameResponse(socket, packet, packetId + 1, payload, "defence-season-reward-unavailable");
-    return true;
-  },
+  handle: require("../modules/event-manager/defence-rewards").handle,
 }))];

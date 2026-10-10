@@ -165,6 +165,13 @@ try
     Set(Type("NKM.NKMCommonConst"), "<GuildDungeonConstTemplet>k__BackingField", constants);
     Static(manager, "OnRecv", members);
     Require((bool)Static(manager, "get_m_bGuildCoopMemberDataRecved")!, "Actual native MEMBER handler must mark reception");
+    if (fixture.TryGetProperty("unlimitedEntryCounters", out var unlimited) && unlimited.GetBoolean())
+    {
+        Require(fixture.GetProperty("storedArenaPlays").GetInt32() > Int(Get(constants, "ArenaPlayCountBasic")) && fixture.GetProperty("storedBossPlays").GetInt32() > Int(Get(constants, "BossPlayCountBasic")), "Unlimited fixture must retain real exhausted save histories");
+        Require(Int(Static(manager, "get_m_ArenaPlayableCount")) == Int(Get(constants, "ArenaPlayCountBasic")), "Production MEMBER packet must restore full native arena entries even for an exhausted save");
+        Require(Int(Get(Get(manager, "m_BossData"), "playCount")) == Int(Get(constants, "BossPlayCountBasic")), "Production INFO packet must restore full native Boss entries even for an exhausted save");
+        Console.WriteLine("PASS native unlimited-entry production fields: retained exhausted save history cannot close current-user Arena/Boss entry gates.");
+    }
     Require(Int(Static(manager, "CanStartBoss")) == 0, "Native CanStartBoss must accept current member, positive HP and five entries");
     var boss = Get(manager, "m_BossData");
     Set(boss, "playCount", 0);
@@ -228,6 +235,20 @@ try
         Set(manager, "<m_ArenaPlayableCount>k__BackingField", 0);
         Set(manager, "m_ArenaTicketBuyCount", Int(Get(constants, "ArenaTicketBuyCount")));
         Require(Int(Static(manager, "CanStartArena", arenaId)) == 20645, "Native arena button must reject exhaustion after the purchase limit");
+        if (fixture.TryGetProperty("unlimitedEntryCounters", out var repeatUnlimited) && repeatUnlimited.GetBoolean())
+        {
+            var refreshedInfo = Decode("ClientPacket.Guild.NKMPacket_GUILD_DUNGEON_INFO_ACK", "infoPayloadBase64");
+            var refreshedMembers = Decode("ClientPacket.Guild.NKMPacket_GUILD_DUNGEON_MEMBER_INFO_ACK", "memberPayloadBase64");
+            Set(manager, "m_ArenaTicketBuyCount", Int(Get(refreshedInfo, "arenaTicketBuyCount")));
+            Static(manager, "OnRecv", refreshedMembers);
+            Require(Int(Static(manager, "get_m_ArenaPlayableCount")) == Int(Get(constants, "ArenaPlayCountBasic")), "Production result/relogin MEMBER refresh must reopen the native exhausted arena gate at its fixed full count");
+            Require(Int(Static(manager, "CanStartArena", arenaId)) == 0, "Refreshed unlimited arena count must permit another fight");
+            Set(Get(manager, "m_BossData"), "playCount", 0);
+            Require(Int(Static(manager, "CanStartBoss")) == 20655, "Synthetic exhausted Boss counter must close the native gate");
+            Set(manager, "m_BossData", Get(refreshedInfo, "bossData"));
+            Require(Int(Static(manager, "CanStartBoss")) == 0, "Production result/relogin INFO refresh must reopen the native exhausted Boss gate");
+            Console.WriteLine("PASS native unlimited-entry refresh: exhausted CanStartArena/CanStartBoss gates reopen from production MEMBER/INFO payloads.");
+        }
         Console.WriteLine("PASS native MEMBER handler and CanStartArena: grades 0..3 consume entries; repeat sector remains playable; completed/exhausted sectors are rejected.");
         Console.WriteLine("PASS native GetMyArtifactDictionary: global medal thresholds select the artifact-list prefix with real battle-condition IDs. Boss effect application remains a separate integration check.");
     }

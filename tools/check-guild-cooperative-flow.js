@@ -52,7 +52,8 @@ for(let index=0;index<4;index++) {
   assert.equal(info().arenaList.find(row=>row.arenaIndex===arena.arenaIndex).totalMedalCount,(index+1)*3,"3481 publishes cumulative medal total");
   assert.equal(guild.completeGuildBattle(ctx,user,stage,{}, {win:true}),null,"duplicate game end cannot double rewards or medals");
 }
-assert.equal(guild.handleRequest(ctx,user,3473,{guildUid}).memberInfoList[0].arenaList.length,4);
+assert.equal(guild.handleRequest(ctx,user,3473,{guildUid}).memberInfoList[0].arenaList.length,0,"native current-user debit list stays empty for unlimited entries");
+assert.equal(state.sessions[initial.sessionId].members[user.userUid].arenaList.length,4,"actual contribution history remains persisted");
 const bossStage=info().bossData.stageId;
 let battle=guild.prepareGuildPractice(ctx,user,{bossStageId:bossStage,selectDeckIndex:0,isPractice:false});
 assert.equal(battle.stage.gameType,17,"real boss entry stays formal mode 17");
@@ -65,7 +66,7 @@ const maxHp=battle.stage.guildBossMaxHp;
 const partial=guild.completeGuildBattle(ctx,user,battle.stage,{raidBossCurHp:maxHp*.75,raidBossMaxHp:maxHp},{win:false});
 assert.equal(partial.packets[0].packetId,3482);
 assert.equal(partial.raidBossResult.curHP,maxHp*.75);
-assert.equal(info().bossData.playCount,4);
+assert.equal(info().bossData.playCount,5);
 assert.equal(info().bossData.remainHp,maxHp*.75);
 const snapshot=JSON.parse(JSON.stringify(ctx.userDb));
 assert.equal(snapshot.guilds[guildUid].cooperative.windowId,windowId);
@@ -76,7 +77,7 @@ const killed=guild.completeGuildBattle(ctx,user,battle.stage,{raidBossCurHp:0,ra
 assert.equal(killed.packets[0].packetId,3482);
 assert.equal(killed.raidBossResult.curHP,0);
 assert.notEqual(info().bossData.stageId,bossStage,"killing a Boss advances to the next real table stage");
-assert.equal(info().bossData.playCount,3);
+assert.equal(info().bossData.playCount,5);
 assert(info().canReward);
 const reward=guild.handleRequest(ctx,user,3477,{});
 assert.equal(reward.errorCode,0);
@@ -99,8 +100,9 @@ assert.equal(info().bossData.playCount,remaining,"explicit practice cannot spend
 assert.equal(state.killPoint,26000);
 assert.equal(JSON.stringify(user.army),JSON.stringify(snapshot.users[1].army),"guild progression does not synthesize units");
 const buy=guild.handleRequest(ctx,user,3483,{});
-assert.equal(buy.currentTicketBuyCount,1);
-assert.throws(()=>guild.handleRequest(ctx,user,3483,{}),/limit/);
+assert.equal(buy.currentTicketBuyCount,0,"unlimited entries never require a purchase");
+assert.equal(guild.handleRequest(ctx,user,3483,{}).currentTicketBuyCount,0,"a repeated stale purchase dialog remains free");
+assert.equal(BigInt(getMiscItem(user,101).countFree),quartzBefore+100n);
 now=new Date("2025-04-14T00:00:00Z");
 assert.equal(info().sessionId,2,"calendar advancement chooses the real session 2 schedule");
 assert.equal(ctx.userDb.guilds[guildUid].cooperative.windowId,windowId);

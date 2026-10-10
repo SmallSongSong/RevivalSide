@@ -101,6 +101,9 @@ const {
 const { getEquipItems, getMoldItems, getCraftSlots } = require("../modules/equipment");
 const localPvp = require("../modules/local-pvp");
 const fierceRecords = require("../modules/misc-stages/fierce-result");
+const defenceRewards = require("../modules/event-manager/defence-rewards");
+const defenceScore = require("../modules/event-manager/defence-score");
+const { createFierceSelector } = require("../modules/fierce-selection");
 const {
   buildPrivateGuildData: buildPersistedPrivateGuildData,
   buildGuildSimpleData: buildPersistedGuildSimpleData,
@@ -584,6 +587,15 @@ let cachedStageCatalog = null;
 let cachedMiscStageCatalog = null;
 let cachedMapIdByStrId = null;
 
+const liveGameSockets = new Set();
+const fierceSelector = createFierceSelector({
+  rootDir: ROOT_DIR,
+  selectionPath: path.join(path.dirname(USER_DB_PATH), "fierce-selection.json"),
+  canApply: assertFierceSelectionCanApply,
+  onApply: refreshFierceSelectionForClients,
+});
+
+
 if (process.env.CS_DUMP_JOIN_LOBBY_ACK_PAYLOAD) {
   const dumpUserUid = String(process.env.CS_DUMP_USER_UID || "");
   const user = ensureUserDefaults(
@@ -653,6 +665,8 @@ const userManager = USER_MANAGER_ENABLED
       makeAccessToken,
       makeToken,
       invalidateJoinLobbyAckPayloadCache,
+      getFierceSelectorState: () => fierceSelector.getState(),
+      saveFierceSelection: (selection) => fierceSelector.saveSelection(selection),
     })
   : null;
 
@@ -691,6 +705,7 @@ function startTcpServer() {
     // The Unity client reacts poorly to tiny TCP write stalls during load.
     // Send framed server packets immediately and batch deliberate bursts below.
     socket.setNoDelay(true);
+    liveGameSockets.add(socket);
     socket.recvBuffer = Buffer.alloc(0);
     socket.session = {
       user: null,
@@ -709,7 +724,8 @@ function startTcpServer() {
 
     socket.on("end", () => console.log("[*] Client ended socket"));
     socket.on("close", (hadError) => {
-      cancelGuildBattle(createPacketContext(), socket.session && socket.session.user, socket.session && socket.session.gameReplay && socket.session.gameReplay.dynamicGame);
+      liveGameSockets.delete(socket);
+      releaseGuildBattleForSocket(socket, "disconnect");
       stopGameSyncTimers(socket);
       console.log(`[-] Client disconnected hadError=${hadError}`);
     });
@@ -3034,11 +3050,22 @@ function stopGameSyncTimers(socket) {
   }
 }
 
+function releaseGuildBattleForSocket(socket, label) {
+  const game = socket && socket.session && socket.session.gameReplay && socket.session.gameReplay.dynamicGame;
+  if (!game || !game.guildBattleToken) return false;
+  try {
+    return Boolean(cancelGuildBattle(createPacketContext(), socket.session.user, game));
+  } catch (error) {
+    console.log(`[guild:release] ${label}: ${summarizeErrorLine(error)}`);
+    return false;
+  }
+}
+
 function abandonDynamicBattle(socket, label = "abandon") {
   const replay = socket && socket.session && socket.session.gameReplay;
   if (!replay || !replay.dynamicGame) return false;
   const dynamicGame = replay.dynamicGame;
-  if (dynamicGame.guildBattleToken) cancelGuildBattle(createPacketContext(), socket.session && socket.session.user, dynamicGame);
+  releaseGuildBattleForSocket(socket, label);
   const hadActiveTimer = Boolean(replay.dynamicBattleTimer || replay.syntheticSyncTimer || replay.officialCombatReplayTimer);
   stopGameSyncTimers(socket);
   replay.pendingGameStartBootstrap = false;
@@ -5605,7 +5632,9 @@ function isRotatableFierceSeason(row) {
 
 function getCurrentFierceSeasonRow(now = getServerNowDate()) {
   const catalog = loadMiscStageCatalog();
-  const forcedId = positiveInt(process.env.CS_FIERCE_SEASON_ID || process.env.CS_DANGER_CLOSE_SEASON_ID);
+  const selectorAvailable = typeof fierceSelector !== "undefined";
+  const selectedId = selectorAvailable ? fierceSelector.getActiveSeasonId() : 0;
+  const forcedId = positiveInt(selectedId || (selectorAvailable && fs.existsSync(fierceSelector.selectionPath) ? 0 : process.env.CS_FIERCE_SEASON_ID || process.env.CS_DANGER_CLOSE_SEASON_ID));
   if (forcedId && catalog.fierceSeasonRows.length) {
     return catalog.fierceSeasonRows.find((row) => positiveInt(row && row.FierceID) === forcedId) || catalog.fierceSeasonRows[0] || null;
   }
@@ -5651,8 +5680,52 @@ function getCurrentFierceSeasonTags(now = getServerNowDate()) {
   };
 }
 
-function buildFierceSeasonIntervalDataList(now = getServerNowDate()) {
-  const season = getCurrentFierceSeasonRow(now);
+function getSelectableFierceSeasonRows() {
+  if (typeof fierceSelector === "undefined") return [];
+  const ids = new Set(fierceSelector.listOptions().map(option => option.seasonId));
+  return loadMiscStageCatalog().fierceSeasonRows.filter(row => ids.has(Number(row.FierceID)));
+}
+
+function getSelectableFierceSeasonTags() {
+  const rows = getSelectableFierceSeasonRows();
+  return { contentsTags: mergeTags(rows.flatMap(row => row.listContentsTagAllow || [])), openTags: mergeTags(rows.map(row => row.m_OpenTag)) };
+}
+
+function assertFierceSelectionCanApply() {
+  for (const socket of liveGameSockets) {
+    const replay = socket.session && socket.session.gameReplay;
+    const game = replay && replay.dynamicGame;
+    if (game && !replay.dynamicBattleResultSent && (game.miscMode === "fierce" || Number(game.gameType) === NGT_FIERCE)) {
+      const failure = new Error("激战支援战斗正在进行，请结束或退出本场战斗后再切换 Boss。");
+      failure.statusCode = 409;
+      throw failure;
+    }
+  }
+}
+
+function refreshFierceSelectionForClients() {
+  console.log(`[fierce-selection] season=${getCurrentFierceSeasonId()} mode=${fierceSelector.getActiveSeasonId() ? "manual" : "rotation"}`);
+  invalidateJoinLobbyAckPayloadCache("fierce-selection");
+  const updates = [];
+  for (const socket of liveGameSockets) {
+    const user = socket.session && socket.session.user;
+    if (!user || socket.destroyed) continue;
+    updates.push({ socket, season: buildFierceSeasonNotPayload(), data: buildFierceDataAckPayload(user) });
+  }
+  if (USE_LOCAL_USER_DB) saveUserDb();
+  for (const update of updates) {
+    try {
+      sendServerGamePacket(update.socket, FIERCE_SEASON_NOT, update.season, "fierce-selection-season");
+      update.socket.session.fierceSeasonId = getCurrentFierceSeasonId();
+      sendServerGamePacket(update.socket, 845, update.data, "fierce-selection-data");
+    } catch (error) {
+      console.log(`[fierce-selection] disconnected client will refresh on login: ${summarizeErrorLine(error)}`);
+      update.socket.destroy();
+    }
+  }
+}
+
+function buildFierceSeasonIntervalDataList(now = getServerNowDate(), season = getCurrentFierceSeasonRow(now), keyBase = 940000) {
   if (!season) return [];
   const window = getCurrentFierceSeasonWindow(now);
   const intervals = [];
@@ -5660,7 +5733,7 @@ function buildFierceSeasonIntervalDataList(now = getServerNowDate()) {
   const rewardStrKey = String(season.m_RewardDateStrID || "");
   if (gameStrKey) {
     intervals.push({
-      key: 940000,
+      key: keyBase,
       strKey: gameStrKey,
       startDate: window.startDate,
       endDate: window.gameEndDate,
@@ -5670,7 +5743,7 @@ function buildFierceSeasonIntervalDataList(now = getServerNowDate()) {
   }
   if (rewardStrKey) {
     intervals.push({
-      key: 940001,
+      key: keyBase + 1,
       strKey: rewardStrKey,
       startDate: window.rewardStartDate,
       endDate: window.rewardEndDate,
@@ -5685,6 +5758,10 @@ function getFierceSeasonIntervalStrKeys(now = getServerNowDate()) {
   return buildFierceSeasonIntervalDataList(now)
     .map((interval) => String(interval && interval.strKey || ""))
     .filter(Boolean);
+}
+
+function getSelectableFierceSeasonIntervalStrKeys() {
+  return mergeTags(getSelectableFierceSeasonRows().flatMap(season => [season.m_GameDateStrID, season.m_RewardDateStrID]));
 }
 
 function positiveModulo(value, divisor) {
@@ -7931,21 +8008,22 @@ function buildFavoritesStageAckPayload(user, errorCode = 0) {
 
 function buildDefenceInfoAckPayload(defenceTempletId = 0, user = null) {
   const saved = user && user.miscStages && user.miscStages.defence && user.miscStages.defence[String(defenceTempletId)] || {};
+  const rewards = defenceRewards.info(user, defenceTempletId);
   return Buffer.concat([
     writeSignedVarInt(0), // errorCode
     writeSignedVarInt(Number(defenceTempletId || 0)), // defenceTempletId
     writeSignedVarInt(Number(saved.bestScore || 0)), // bestScore
     writeBool(Boolean(saved.missionResult1)), // m_MissionResult1
     writeBool(Boolean(saved.missionResult2)), // m_MissionResult2
-    writeSignedVarInt(0), // rank
-    writeSignedVarInt(0), // rankPercent
-    writeBool(false), // canReceiveRankReward
+    writeSignedVarInt(rewards.rank), // rank
+    writeSignedVarInt(rewards.rankPercent), // rankPercent
+    writeBool(rewards.canReceiveRankReward),
     writeNullableObject(Buffer.concat([
-      writeNullableObject(buildCommonProfileData(null, 0n, 0n, "")),
-      writeSignedVarInt(0),
+      writeNullableObject(buildCommonProfileData(rewards.rank ? user : null, rewards.rank ? toBigInt(user.userUid) : 0n, rewards.rank ? toBigInt(user.friendCode || user.userUid) : 0n, rewards.rank ? user.nickname || "" : "")),
+      writeSignedVarInt(Number(saved.bestScore || 0)),
       writeNullableObject(buildGuildSimpleData()),
     ])), // topRankProfile
-    writeIntList([]), // scoreRewardIds
+    writeIntList(rewards.scoreRewardIds),
   ]);
 }
 
@@ -8514,8 +8592,7 @@ function sendDefenceGameEnd(socket, options = {}) {
   const win = options.giveup || options.restart ? false : typeof managedWin === "boolean" ? managedWin : isBattleWin(battleState);
   const missions = resolveDungeonMissionResults(game.dungeonID, { stageId: game.stageID, win, battleState: buildBattleMissionState(recordsState, { playTime }) });
   const records = Array.isArray(recordsState.unitRecords) ? recordsState.unitRecords : Object.values(recordsState.unitRecords || {});
-  const gameScore = records.filter((record) => isBTeamType(record.teamType ?? record.TeamType ?? record.team))
-    .reduce((sum, record) => sum + Math.max(0, Number(record.recordDieCount ?? record.RecordDieCount ?? 0)), 0);
+  const gameScore = defenceScore.calculateScore(records, isBTeamType);
   const state = ensureMiscStageState(user);
   const defenceId = positiveInt(game.defenceTempletId) || positiveInt((classifyMiscDungeon(game.dungeonID) || {}).defenceTempletId);
   const saved = state ? (state.defence ||= {})[String(defenceId)] || {} : {};
@@ -9037,7 +9114,8 @@ function getEventContentsTagsForContentsVersion(state = getActiveEventState()) {
       EVENT_CONTENTS_TAGS_ENABLED ? state.contentsTags : [],
       EVENT_COUNTER_PASS_CONTENTS_TAGS_ENABLED ? state.counterPassContentsTags : [],
       EVENT_SHOP_CONTENTS_TAGS_ENABLED ? getActiveEventShopTags().contentsTags : [],
-      fierceTags.contentsTags
+      fierceTags.contentsTags,
+      getSelectableFierceSeasonTags().contentsTags
     )
   );
 }
@@ -9079,7 +9157,8 @@ function getEffectiveOpenTags(baseTags) {
         REQUIRED_STORY_OPEN_TAGS,
         activeEventState.openTags,
         EVENT_SHOP_OPEN_TAGS_ENABLED ? getActiveEventShopTags().openTags : [],
-        getCurrentFierceSeasonTags().openTags
+        getCurrentFierceSeasonTags().openTags,
+        getSelectableFierceSeasonTags().openTags
       )
     ),
     activeEventState.openTags
@@ -9199,6 +9278,15 @@ function buildJoinLobbyIntervalDataList(user) {
     const payload = buildIntervalData(interval);
     const strKey = readIntervalDataStrKey(payload);
     if (strKey) byStrKey.set(strKey, payload);
+  }
+  // The native client loads interval templates at login. Preload selectable
+  // seasons so a later 854/845 refresh can switch bosses without reconnecting.
+  for (const [index, season] of getSelectableFierceSeasonRows().entries()) {
+    for (const interval of buildFierceSeasonIntervalDataList(getServerNowDate(), season, 941000 + index * 2)) {
+      const payload = buildIntervalData(interval);
+      const strKey = readIntervalDataStrKey(payload);
+      if (strKey && !byStrKey.has(strKey)) byStrKey.set(strKey, payload);
+    }
   }
   for (const payload of buildRequiredIntervalDataList()) {
     const strKey = readIntervalDataStrKey(payload);
@@ -9430,6 +9518,7 @@ function buildJoinLobbyAckPayload(user) {
   const explicitMergeIntervalStrKeys = mergeTags(
     eventShopMergeIntervalStrKeys,
     fierceIntervalStrKeys,
+    getSelectableFierceSeasonIntervalStrKeys(),
     activeEventMissionIntervalStrKeys,
     activeEventIntervalStrKeys,
     activeIntervalStrKeys.filter((key) => key.startsWith("DATE_GUILD_DUNGEON_"))

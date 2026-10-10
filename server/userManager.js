@@ -27,6 +27,8 @@ function createUserManager(options) {
     invalidateJoinLobbyAckPayloadCache:
       typeof options.invalidateJoinLobbyAckPayloadCache === "function" ? options.invalidateJoinLobbyAckPayloadCache : null,
   };
+  config.getFierceSelectorState = typeof options.getFierceSelectorState === "function" ? options.getFierceSelectorState : null;
+  config.saveFierceSelection = typeof options.saveFierceSelection === "function" ? options.saveFierceSelection : null;
   const html = buildUserManagerHtml(config.basePath);
 
   async function handle(req, res) {
@@ -72,6 +74,24 @@ async function routeRequest(config, html, req, res, requestUrl) {
 
   if (req.method === "GET" && pathname === `${apiPath}/health`) {
     sendJson(res, 200, buildHealth(config));
+    return;
+  }
+
+  if (pathname === `${apiPath}/fierce-boss`) {
+    if (!config.getFierceSelectorState || !config.saveFierceSelection) {
+      sendJson(res, 503, { error: "激战支援 Boss 配置暂不可用。" });
+      return;
+    }
+    if (req.method === "GET") {
+      sendJson(res, 200, await config.getFierceSelectorState());
+      return;
+    }
+    if (req.method === "PUT") {
+      const body = await readJsonBody(req, Math.min(config.maxBodyBytes, 4096));
+      sendJson(res, 200, await config.saveFierceSelection(body));
+      return;
+    }
+    sendJson(res, 405, { error: "Method not allowed." });
     return;
   }
 
@@ -1339,6 +1359,14 @@ function buildUserManagerHtml(basePath) {
         grid-template-columns: 1fr;
       }
     }
+    .boss-overlay { position: fixed; inset: 0; z-index: 10; background: #0009; display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .boss-overlay[hidden] { display: none; }
+    .boss-panel { width: min(520px, 100%); max-height: 90vh; overflow: auto; background: var(--panel, #172332); border: 1px solid #52657a; border-radius: 12px; padding: 20px; }
+    .boss-panel h2 { margin-top: 0; font-size: 20px; }
+    .boss-panel p { line-height: 1.5; }
+    .boss-panel select { width: 100%; padding: 10px; margin: 8px 0 16px; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+    .boss-actions { display: flex; gap: 10px; justify-content: flex-end; }
+    #fierceBossStatus { white-space: pre-wrap; }
   </style>
 </head>
 <body>
@@ -1347,6 +1375,7 @@ function buildUserManagerHtml(basePath) {
       <h1>RevivalSide User Manager</h1>
       <div class="header-meta" id="dbMeta">Loading</div>
       <div class="header-actions">
+        <button id="fierceBossBtn" type="button">激战支援 Boss</button>
         <button id="reloadBtn" title="Reload from disk">Reload</button>
         <button id="importJsonBtn" title="Add one profile from a copied users.json clipboard value or file">Import copied JSON</button>
         <input id="importJsonFileInput" type="file" accept="application/json,.json" hidden>
@@ -1401,6 +1430,16 @@ function buildUserManagerHtml(basePath) {
     </div>
   </div>
 
+  <div class="boss-overlay" id="fierceBossDialog" hidden>
+    <section class="boss-panel" role="dialog" aria-modal="true" aria-labelledby="fierceBossTitle">
+      <h2 id="fierceBossTitle">激战支援 Boss</h2>
+      <p>选择本地激战支援的对手，保存后立即生效，下次启动服务会保留选择。正在进行激战支援战斗时，请先结束或退出战斗。</p>
+      <label for="fierceBossSelect">Boss</label>
+      <select id="fierceBossSelect" aria-label="激战支援 Boss"></select>
+      <p id="fierceBossStatus" role="status">正在加载…</p>
+      <div class="boss-actions"><button id="fierceBossClose" type="button">关闭</button><button id="fierceBossSave" class="primary" type="button">保存并切换</button></div>
+    </section>
+  </div>
   <script>
     const BASE_PATH = ${JSON.stringify(basePath)};
     const API = BASE_PATH + "/api";
@@ -1421,6 +1460,12 @@ function buildUserManagerHtml(basePath) {
     };
 
     const els = {
+      fierceBossBtn: document.getElementById("fierceBossBtn"),
+      fierceBossDialog: document.getElementById("fierceBossDialog"),
+      fierceBossSelect: document.getElementById("fierceBossSelect"),
+      fierceBossStatus: document.getElementById("fierceBossStatus"),
+      fierceBossSave: document.getElementById("fierceBossSave"),
+      fierceBossClose: document.getElementById("fierceBossClose"),
       dbMeta: document.getElementById("dbMeta"),
       reloadBtn: document.getElementById("reloadBtn"),
       importJsonBtn: document.getElementById("importJsonBtn"),
@@ -1503,7 +1548,41 @@ function buildUserManagerHtml(basePath) {
       setStatus("Ready", "ok");
     }
 
+    async function openFierceBoss() {
+      els.fierceBossDialog.hidden = false;
+      els.fierceBossSave.disabled = true;
+      els.fierceBossStatus.textContent = "正在加载…";
+      try {
+        const data = await requestJson("/fierce-boss");
+        els.fierceBossSelect.replaceChildren();
+        const rows = [{ seasonId: 0, name: "自动轮换" }].concat(data.options || []);
+        rows.forEach(function (row) {
+          const option = document.createElement("option");
+          option.value = String(row.seasonId); option.textContent = row.name;
+          els.fierceBossSelect.appendChild(option);
+        });
+        els.fierceBossSelect.value = String(data.seasonId);
+        els.fierceBossStatus.textContent = "当前：" + data.activeName + (data.warning ? "\n" + data.warning : "");
+        els.fierceBossSave.disabled = false;
+        els.fierceBossSelect.focus();
+      } catch (error) { els.fierceBossStatus.textContent = error.message; }
+    }
+    async function saveFierceBoss() {
+      els.fierceBossSave.disabled = true;
+      els.fierceBossStatus.textContent = "正在切换…";
+      try {
+        const data = await requestJson("/fierce-boss", { method: "PUT", body: JSON.stringify({ seasonId: Number(els.fierceBossSelect.value) }) });
+        els.fierceBossStatus.textContent = "已切换为：" + data.activeName + "。游戏中重新进入激战支援即可挑战。";
+      } catch (error) { els.fierceBossStatus.textContent = error.message; }
+      finally { els.fierceBossSave.disabled = false; }
+    }
     function bindEvents() {
+      els.fierceBossBtn.addEventListener("click", openFierceBoss);
+      els.fierceBossSave.addEventListener("click", saveFierceBoss);
+      els.fierceBossClose.addEventListener("click", function () { els.fierceBossDialog.hidden = true; els.fierceBossBtn.focus(); });
+      els.fierceBossDialog.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") { els.fierceBossDialog.hidden = true; els.fierceBossBtn.focus(); }
+      });
       els.searchInput.addEventListener("input", renderUsers);
       els.reloadBtn.addEventListener("click", reloadFromDisk);
       els.importJsonBtn.addEventListener("click", importCopiedJson);

@@ -62,111 +62,16 @@ The tool patches both the fixed-width IL2CPP endpoint and Gamebase's launching r
 
 ### Local fork test releases
 
-The local fork uses version `0.4.3a` (`versionCode=15`). This release retains
-the verified upstream Android `v0.4.0a` shell: DEX classes, resources, native
-libraries, and game data. It rebuilds the shared listener archive from current
-fork sources and compiles the managed combat host from current C# sources.
-This preserves the released capture relay, automatic profile import on returning
-to the companion, client detection, and streaming save export hotfixes.
+The local fork uses version `0.4.4a` (`versionCode=22`). The build compiles the Android Kotlin/Java frontend and DEX from current sources while preserving the verified upstream Android `v0.4.0a` resources, native libraries and game data. It also rebuilds the shared listener and both managed combat hosts.
 
-With Python 3.9+, Node.js, .NET 8, Java 17, and Android SDK 36 available:
+The main screen uses one START/STOP toggle and a separate Chinese Fierce Boss selector. START starts the local listener; the official capture workflow is not part of this control. Boss selection is persisted outside the account database and applies without restarting; in-flight Fierce battles reject changes.
+
+The local release builder requires Python 3.9+, Node.js, .NET 8, JDK 17, Android SDK 36, cached Kotlin 2.3.0 compiler dependencies, and R8 8.13.19. Obtain the R8 jar from the official Google Maven repository at `https://dl.google.com/dl/android/maven2/com/android/tools/r8/8.13.19/r8-8.13.19.jar`, placing it at `exports/android-build-tools/r8-8.13.19.jar`. Kotlin compatibility is documented at [Android Kotlin support](https://developer.android.com/build/kotlin-support).
+
+Configure `JAVA_HOME`, `ANDROID_HOME`, `REVIVALSIDE_ANDROID_KEYSTORE`, `REVIVALSIDE_ANDROID_KEY_ALIAS`, `REVIVALSIDE_ANDROID_KEYSTORE_PASSWORD` and `REVIVALSIDE_ANDROID_KEY_PASSWORD`, then run:
 
 ```sh
-# Configure the four signing variables described below, then:
-tools/build-android-local-release.sh \
-  exports/upstream-android/RevivalSide-Android-v0.4.0a.apk
+REVIVALSIDE_ANDROID_VERSION=0.4.4a REVIVALSIDE_ANDROID_VERSION_CODE=22 bash tools/build-android-local-release.sh
 ```
 
-Commit or stage new runtime files before packaging: this path overlays tracked
-files, refuses untracked runtime files, removes obsolete shared handlers, and never
-copies local account databases or `.env`. It retains the upstream starter profile
-and external content contract.
-The script replaces `CombatHost.dll` for both Android ABIs; the existing .NET 8
-runtime manifests remain compatible because the host targets `net8.0` and keeps
-the same `Mono.Cecil 0.11.5` dependency. The packager updates the binary manifest
-version, removes the upstream APK signature, aligns the archive, and signs it
-with the fork key. Source, host, archive, DEX, resource, manifest, and native
-hashes are recorded in `exports/android-local-build.json` and checked against
-the finished APK.
-
-Configure the `REVIVALSIDE_ANDROID_KEYSTORE`, `REVIVALSIDE_ANDROID_KEY_ALIAS`,
-`REVIVALSIDE_ANDROID_KEYSTORE_PASSWORD`, and `REVIVALSIDE_ANDROID_KEY_PASSWORD`
-environment variables for a signed release. A fork test key differs from the
-upstream signing key, so Android cannot install it over an upstream-signed app.
-Preserve existing app data before changing signing identities. The patched
-CounterSide client and matching external payload ZIP remain separate prerequisites.
-
-After configuring those signing variables and `ANDROID_HOME`,
-`tools/build-android-local-release.sh` performs the complete publish, staging,
-shell repack, signing, asset hash comparison, and APK signature verification. Set
-`DOTNET_BIN` if .NET is outside `PATH`. Keep the signing keystore private and reuse
-it for subsequent fork updates.
-
-The repository's Kotlin frontend source predates several changes in the released
-shell. Future frontend work must first align that source with `v0.4.0a` behavior.
-This release uses the inherited shell explicitly and reports that build mode.
-
-Refresh the bundled Node runtime when needed:
-
-```powershell
-.\vendor-nodejs-mobile.ps1
-```
-
-Stage the exact `core` and `game-data` components from the matching PC release. This also bundles the Android C# combat runtime, required managed assemblies, and gameplay tables so profile import and gameplay cannot ship with the combat host disabled:
-
-```powershell
-$release = "..\prebuilt\revivalside-github-release"
-$core = Get-ChildItem $release\RevivalSide-core-*.zip | Select-Object -First 1 -ExpandProperty FullName
-$gameData = Get-ChildItem $release\RevivalSide-game-data-*.zip | Select-Object -First 1 -ExpandProperty FullName
-$androidHost = "..\dist\CounterSide-Android-9.21.3352381-host"
-.\build-android-listener-assets.ps1 `
-  -PayloadZip $core,$gameData `
-  -PayloadManifest $release\RevivalSideReleaseManifest.json `
-  -AndroidScriptBundle "..\prebuilt\android-client-assets\ab_script" `
-  -AndroidPatchInfo "$androidHost\patchfiles\Android\ANDROID_335570\PatchInfo.json" `
-  -AndroidLuaCacheZip "..\prebuilt\android-lua-cache-9.21.3352381.zip" `
-  -AndroidLuaCacheManifest "..\prebuilt\android-lua-cache-9.21.3352381.json" `
-  -AndroidClientPayloadManifest "$androidHost\payload-manifest.json" `
-  -AndroidClientCdnBaseUrl "https://assets.example.com/patchfiles/"
-```
-
-For a normal release, `tools/build-android-resource-release.ps1 -AssetCdnBaseUrl ...` performs this staging automatically. The Lua cache manifest is validated, but the cache archive is never duplicated in the APK because the complete imported or external payload already contains it.
-
-Then build/install:
-
-```bat
-build-and-install.bat
-```
-
-Then open **RevivalSide Android**.
-
-Recommended smoke flow:
-
-1. Tap **START**.
-2. RevivalSide validates the installed Counter:Side version and endpoint patch.
-3. CounterSide launches after the local listener, lobby cache, and managed combat host are ready.
-4. Watch the Activity log and Android logcat.
-
-For official profile capture, tap **ACK JSON**, reach the official lobby, then return to RevivalSide Android and tap **EXTRACT**. The app copies the latest `JOIN_LOBBY_ACK` bundle into `server-data/captured-game-flow`, imports it through the embedded listener, and switches the imported profile active.
-
-## Listener Payload
-
-The debug APK bundles:
-
-- Node.js Mobile `v18.20.4` native libraries for `armeabi-v7a` and `arm64-v8a`.
-- A small JNI bridge library that starts Node in a background thread.
-- The PC release's listener and game-data component contents under `assets/revivalside-payload.zip`, with only the Android official/RevivalSide server-switch compatibility route added to the listener.
-- Android-only managed combat and .NET files under `assets/revivalside-listener`; this directory is never overlaid onto the shared listener.
-- A complete PC gameplay-table archive for the managed listener. Counter:Side's Unity bundles and ExtraAsset cache remain on the configured CDN.
-
-The Android service extracts the shared listener, gameplay tables, and Android platform files into separate content-addressed directories. Obsolete versions are removed only after the new version is complete. Profiles, server time, captures, and logs stay in the persistent `server-data`/`logs` directories.
-
-The listener refuses to start if the shared payload, gameplay archive, or Android platform manifest is missing; it no longer falls back to a partial listener overlay.
-
-## Notes
-
-- The app validates the patched Counter:Side APK. `tools/patch-counterside-android-client.ps1` performs the reproducible patch/sign step on a user-supplied XAPK.
-- The app does not require root.
-- Normal gameplay can run alongside another Android VPN; only official-profile capture needs RevivalSide's VPN.
-- IPv4 is required only for the optional capture bridge.
-- Standalone payload builds include Android arm and arm64 .NET combat hosts. Compact diagnostic builds still require `-IncludeSteamManagedCombatHost -IncludeAndroidDotnetRuntime` when managed combat is needed.
+Stage new runtime files before packaging. The builder excludes personal account databases and `.env`, removes obsolete shared handlers, compiles the frontend, updates the manifest, aligns and signs the archive, and verifies source/DEX/resource/native/payload hashes. It preserves the original CounterSide client and external payload contract. Fork updates require the same signing identity; back up account data before changing keys.

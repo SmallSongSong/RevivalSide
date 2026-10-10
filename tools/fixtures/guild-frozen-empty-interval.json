@@ -1,0 +1,1294 @@
+{
+  "source": "RevivalSide-Android-v0.4.3a.apk / assets/revivalside-gameplay-tables.zip (public game tables only)",
+  "frozenIntervalLuacSha256": "46f468722a798da0d530b710f5e4f96d0d34b35e1447cad9a93c879d87dc95ec",
+  "frozenIntervalLuacBytes": 87,
+  "seasons": [
+    {
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ],
+      "m_SeasonDungeonGroup": 100012,
+      "m_SeasonName": "SI_GUILD_SEASON_NAME_DEMOLTION@@12",
+      "m_SeasonBgPrefabName": "NKM_UI_CONSORTIUM_COOP_MAIN_DEMOLTION",
+      "m_SeasonRewardGroup": 100012,
+      "m_SeasonID": 100012,
+      "m_DateStrID": "DATE_GUILD_DUNGEON_SEASON_DEMOLTION_2025_2",
+      "m_SeasonRaidGroup": 10001,
+      "m_SeasonBgBlurName": "NKM_UI_CONSORTIUM_COOP_DEMOLTION_BG_BLUR"
+    },
+    {
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ],
+      "m_SeasonDungeonGroup": 110012,
+      "m_SeasonName": "SI_GUILD_SEASON_NAME_GIGAS@@12",
+      "m_SeasonBgPrefabName": "NKM_UI_CONSORTIUM_COOP_MAIN_GIGAS",
+      "m_SeasonRewardGroup": 110012,
+      "m_SeasonID": 110012,
+      "m_DateStrID": "DATE_GUILD_DUNGEON_SEASON_GIGAS_2025_2",
+      "m_SeasonRaidGroup": 10002,
+      "m_SeasonBgBlurName": "NKM_UI_CONSORTIUM_COOP_GIGAS_BG_BLUR"
+    }
+  ],
+  "intervalTable": {
+    "rootName": "INTERVAL_TEMPLET",
+    "records": [],
+    "root": {}
+  },
+  "tags": [
+    "guild_dungeon_season_demoltion_2025_2",
+    "guild_dungeon_season_gigas_2025_2"
+  ],
+  "schedules": [
+    {
+      "m_UseSeasonDungeonID_2": 8010902,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ],
+      "m_UseSeasonDungeonID_4": 8011103,
+      "m_UseSeasonDungeonID_3": 8010403,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 205,
+      "m_SeasonSessionIndex": 1,
+      "m_UseSeasonDungeonID_1": 8010301
+    },
+    {
+      "m_UseSeasonDungeonID_2": 8010602,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ],
+      "m_UseSeasonDungeonID_4": 8011201,
+      "m_UseSeasonDungeonID_3": 8010103,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 206,
+      "m_SeasonSessionIndex": 2,
+      "m_UseSeasonDungeonID_1": 8011001
+    },
+    {
+      "m_UseSeasonDungeonID_2": 8010502,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ],
+      "m_UseSeasonDungeonID_4": 8010303,
+      "m_UseSeasonDungeonID_3": 8010703,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 207,
+      "m_SeasonSessionIndex": 3,
+      "m_UseSeasonDungeonID_1": 8010801
+    },
+    {
+      "m_UseSeasonDungeonID_2": 8020902,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ],
+      "m_UseSeasonDungeonID_4": 8021101,
+      "m_UseSeasonDungeonID_3": 8010403,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 208,
+      "m_SeasonSessionIndex": 1,
+      "m_UseSeasonDungeonID_1": 8020801
+    },
+    {
+      "m_UseSeasonDungeonID_2": 8010402,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ],
+      "m_UseSeasonDungeonID_4": 8020703,
+      "m_UseSeasonDungeonID_3": 8010203,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 209,
+      "m_SeasonSessionIndex": 2,
+      "m_UseSeasonDungeonID_1": 8010501
+    },
+    {
+      "m_UseSeasonDungeonID_2": 8011002,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ],
+      "m_UseSeasonDungeonID_4": 8021101,
+      "m_UseSeasonDungeonID_3": 8010103,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 210,
+      "m_SeasonSessionIndex": 3,
+      "m_UseSeasonDungeonID_1": 8020701
+    }
+  ],
+  "arenas": [
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010101,
+      "m_StageRewardArtifactGroup": 8010101,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1369,
+      "m_StageArenaIndex": 1,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010102,
+      "m_StageRewardArtifactGroup": 8010102,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1370,
+      "m_StageArenaIndex": 1,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010103,
+      "m_StageRewardArtifactGroup": 8010103,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1371,
+      "m_StageArenaIndex": 1,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010201,
+      "m_StageRewardArtifactGroup": 8010201,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1372,
+      "m_StageArenaIndex": 2,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010202,
+      "m_StageRewardArtifactGroup": 8010202,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1373,
+      "m_StageArenaIndex": 2,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010203,
+      "m_StageRewardArtifactGroup": 8010203,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1374,
+      "m_StageArenaIndex": 2,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010301,
+      "m_StageRewardArtifactGroup": 8010301,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1375,
+      "m_StageArenaIndex": 3,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010302,
+      "m_StageRewardArtifactGroup": 8010302,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1376,
+      "m_StageArenaIndex": 3,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010303,
+      "m_StageRewardArtifactGroup": 8010303,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1377,
+      "m_StageArenaIndex": 3,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010401,
+      "m_StageRewardArtifactGroup": 8010401,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1378,
+      "m_StageArenaIndex": 4,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010402,
+      "m_StageRewardArtifactGroup": 8010402,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1379,
+      "m_StageArenaIndex": 4,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010403,
+      "m_StageRewardArtifactGroup": 8010403,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1380,
+      "m_StageArenaIndex": 4,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010501,
+      "m_StageRewardArtifactGroup": 8010501,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1381,
+      "m_StageArenaIndex": 5,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010502,
+      "m_StageRewardArtifactGroup": 8010502,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1382,
+      "m_StageArenaIndex": 5,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010503,
+      "m_StageRewardArtifactGroup": 8010503,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1383,
+      "m_StageArenaIndex": 5,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010601,
+      "m_StageRewardArtifactGroup": 8010601,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1384,
+      "m_StageArenaIndex": 6,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010602,
+      "m_StageRewardArtifactGroup": 8010602,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1385,
+      "m_StageArenaIndex": 6,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010603,
+      "m_StageRewardArtifactGroup": 8010603,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1386,
+      "m_StageArenaIndex": 6,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010701,
+      "m_StageRewardArtifactGroup": 8010701,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1387,
+      "m_StageArenaIndex": 7,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010702,
+      "m_StageRewardArtifactGroup": 8010702,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1388,
+      "m_StageArenaIndex": 7,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010703,
+      "m_StageRewardArtifactGroup": 8010703,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1389,
+      "m_StageArenaIndex": 7,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010801,
+      "m_StageRewardArtifactGroup": 8010801,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1390,
+      "m_StageArenaIndex": 8,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010802,
+      "m_StageRewardArtifactGroup": 8010802,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1391,
+      "m_StageArenaIndex": 8,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010803,
+      "m_StageRewardArtifactGroup": 8010803,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1392,
+      "m_StageArenaIndex": 8,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010901,
+      "m_StageRewardArtifactGroup": 8010901,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1393,
+      "m_StageArenaIndex": 9,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010902,
+      "m_StageRewardArtifactGroup": 8010902,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1394,
+      "m_StageArenaIndex": 9,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010903,
+      "m_StageRewardArtifactGroup": 8010903,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1395,
+      "m_StageArenaIndex": 9,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8011001,
+      "m_StageRewardArtifactGroup": 8011001,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1396,
+      "m_StageArenaIndex": 10,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8011002,
+      "m_StageRewardArtifactGroup": 8011002,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1397,
+      "m_StageArenaIndex": 10,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8011003,
+      "m_StageRewardArtifactGroup": 8011003,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1398,
+      "m_StageArenaIndex": 10,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8011101,
+      "m_StageRewardArtifactGroup": 8011101,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1399,
+      "m_StageArenaIndex": 11,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8011102,
+      "m_StageRewardArtifactGroup": 8011102,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1400,
+      "m_StageArenaIndex": 11,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8011103,
+      "m_StageRewardArtifactGroup": 8011103,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1401,
+      "m_StageArenaIndex": 11,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 4,
+      "m_SeasonDungeonID": 8011201,
+      "m_StageRewardArtifactGroup": 8011201,
+      "m_SeasonDungeonGroup": 100012,
+      "IDX": 1402,
+      "m_StageArenaIndex": 12,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010101,
+      "m_StageRewardArtifactGroup": 8020101,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1403,
+      "m_StageArenaIndex": 1,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010102,
+      "m_StageRewardArtifactGroup": 8020102,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1404,
+      "m_StageArenaIndex": 1,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010103,
+      "m_StageRewardArtifactGroup": 8020103,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1405,
+      "m_StageArenaIndex": 1,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010201,
+      "m_StageRewardArtifactGroup": 8020201,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1406,
+      "m_StageArenaIndex": 2,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010202,
+      "m_StageRewardArtifactGroup": 8020202,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1407,
+      "m_StageArenaIndex": 2,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010203,
+      "m_StageRewardArtifactGroup": 8020203,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1408,
+      "m_StageArenaIndex": 2,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010301,
+      "m_StageRewardArtifactGroup": 8020301,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1409,
+      "m_StageArenaIndex": 3,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010302,
+      "m_StageRewardArtifactGroup": 8020302,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1410,
+      "m_StageArenaIndex": 3,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010303,
+      "m_StageRewardArtifactGroup": 8020303,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1411,
+      "m_StageArenaIndex": 3,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010401,
+      "m_StageRewardArtifactGroup": 8020401,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1412,
+      "m_StageArenaIndex": 4,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010402,
+      "m_StageRewardArtifactGroup": 8020402,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1413,
+      "m_StageArenaIndex": 4,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010403,
+      "m_StageRewardArtifactGroup": 8020403,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1414,
+      "m_StageArenaIndex": 4,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010501,
+      "m_StageRewardArtifactGroup": 8020501,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1415,
+      "m_StageArenaIndex": 5,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010502,
+      "m_StageRewardArtifactGroup": 8020502,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1416,
+      "m_StageArenaIndex": 5,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010503,
+      "m_StageRewardArtifactGroup": 8020503,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1417,
+      "m_StageArenaIndex": 5,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8010601,
+      "m_StageRewardArtifactGroup": 8020601,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1418,
+      "m_StageArenaIndex": 6,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8010602,
+      "m_StageRewardArtifactGroup": 8020602,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1419,
+      "m_StageArenaIndex": 6,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8010603,
+      "m_StageRewardArtifactGroup": 8020603,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1420,
+      "m_StageArenaIndex": 6,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8020701,
+      "m_StageRewardArtifactGroup": 8020701,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1421,
+      "m_StageArenaIndex": 7,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8020702,
+      "m_StageRewardArtifactGroup": 8020702,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1422,
+      "m_StageArenaIndex": 7,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8020703,
+      "m_StageRewardArtifactGroup": 8020703,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1423,
+      "m_StageArenaIndex": 7,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8020801,
+      "m_StageRewardArtifactGroup": 8020801,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1424,
+      "m_StageArenaIndex": 8,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8020802,
+      "m_StageRewardArtifactGroup": 8020802,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1425,
+      "m_StageArenaIndex": 8,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8020803,
+      "m_StageRewardArtifactGroup": 8020803,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1426,
+      "m_StageArenaIndex": 8,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8020901,
+      "m_StageRewardArtifactGroup": 8020901,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1427,
+      "m_StageArenaIndex": 9,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8020902,
+      "m_StageRewardArtifactGroup": 8020902,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1428,
+      "m_StageArenaIndex": 9,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8020903,
+      "m_StageRewardArtifactGroup": 8020903,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1429,
+      "m_StageArenaIndex": 9,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 1,
+      "m_SeasonDungeonID": 8011001,
+      "m_StageRewardArtifactGroup": 8021001,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1430,
+      "m_StageArenaIndex": 10,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 2,
+      "m_SeasonDungeonID": 8011002,
+      "m_StageRewardArtifactGroup": 8021002,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1431,
+      "m_StageArenaIndex": 10,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 3,
+      "m_SeasonDungeonID": 8011003,
+      "m_StageRewardArtifactGroup": 8021003,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1432,
+      "m_StageArenaIndex": 10,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 4,
+      "m_SeasonDungeonID": 8021101,
+      "m_StageRewardArtifactGroup": 8021101,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1433,
+      "m_StageArenaIndex": 11,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    },
+    {
+      "m_StageLevelIndex": 4,
+      "m_SeasonDungeonID": 8011201,
+      "m_StageRewardArtifactGroup": 8021201,
+      "m_SeasonDungeonGroup": 110012,
+      "IDX": 1434,
+      "m_StageArenaIndex": 12,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2025_2"
+      ]
+    }
+  ],
+  "bosses": [
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 12000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 1,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 240,
+      "IDX": 231,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011301
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 14000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 2,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 250,
+      "IDX": 232,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011302
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 16000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 3,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 260,
+      "IDX": 233,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011303
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 18000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 4,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 270,
+      "IDX": 234,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011304
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 20000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 5,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 235,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011305
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 22000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 6,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 236,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011306
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 24000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 7,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 237,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011307
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 26000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 8,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 238,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011308
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 28000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 9,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 239,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011309
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 30000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 10,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 240,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011310
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 32000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 11,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 241,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011311
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 34000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 12,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 242,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011312
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 36000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 13,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 243,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011313
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 38000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 14,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 244,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011314
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 40000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 15,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 245,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011315
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_RaidRewardPoint": 40000,
+      "m_SeasonRaidGroup": 10001,
+      "m_RaidStageIndex": 16,
+      "m_RaidRewardID": 0,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_DEMOLTION_2023_1"
+      ],
+      "m_RaidRewardValue": 0,
+      "IDX": 246,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD",
+      "m_StageID": 8011316
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 12000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 1,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 240,
+      "IDX": 247,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021301
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 14000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 2,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 250,
+      "IDX": 248,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021302
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 16000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 3,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 260,
+      "IDX": 249,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021303
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 18000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 4,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 270,
+      "IDX": 250,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021304
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 20000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 5,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 251,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021305
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 22000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 6,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 252,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021306
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 24000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 7,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 253,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021307
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 26000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 8,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 254,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021308
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 28000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 9,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 255,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021309
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 30000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 10,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 256,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021310
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 32000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 11,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 257,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021311
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 34000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 12,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 258,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021312
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 36000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 13,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 259,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021313
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 38000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 14,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 260,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021314
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 40000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 15,
+      "m_RaidRewardID": 21,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 280,
+      "IDX": 261,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021315
+    },
+    {
+      "m_RaidBossSDName": "AB_UNIT_SD_SPINE_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_RaidRewardPoint": 40000,
+      "m_SeasonRaidGroup": 10002,
+      "m_RaidStageIndex": 16,
+      "m_RaidRewardID": 0,
+      "listContentsTagAllow": [
+        "GUILD_DUNGEON_SEASON_GIGAS_2023_1"
+      ],
+      "m_RaidRewardValue": 0,
+      "IDX": 262,
+      "m_RaidBossFaceCardName": "AB_UNIT_FACE_CARD_NKM_MOB_BOSS_BASIC_GUILD2",
+      "m_StageID": 8021316
+    }
+  ]
+}

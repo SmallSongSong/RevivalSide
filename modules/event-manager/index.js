@@ -19,6 +19,7 @@ const DEFAULT_EVENT_TABLES = Object.freeze([
   table("interval", "ab_script", "LUA_INTERVAL_TEMPLET_V2.json", { optional: true }),
   table("event", "ab_script", "LUA_EVENT_BAR_TEMPLET.json", { optional: true }),
   table("event", "ab_script", "LUA_EVENT_TAB_TEMPLET.json"),
+  table("event", "ab_script", "LUA_DEFENCE_TEMPLET.json", { optional: true }),
   table("event", "ab_script", "LUA_EVENT_LOBBY_INDEX_TEMPLET.json"),
   table("event", "ab_script", "LUA_EVENT_COLLECTION_INDEX_TEMPLET.json"),
   table("event", "ab_script", "LUA_EVENT_COLLECTION_MERGE_TEMPLET.json", { optional: true }),
@@ -234,7 +235,15 @@ function createEventManager(options = {}) {
   let cachedRegistry = null;
 
   function getRegistry() {
-    if (!cachedRegistry) cachedRegistry = buildEventRegistry(reader.readTables(), config);
+    if (!cachedRegistry) {
+      cachedRegistry = buildEventRegistry(reader.readTables(), config);
+      if (config.offlineDefenceEnabled) {
+        const dungeonTable = readGameplayTable("ab_script_dungeon_templet", "LUA_DUNGEON_TEMPLET_BASE.json", {
+          rootDir, env, optional: true, logLabel: "event-manager",
+        });
+        cachedRegistry.offlineDefenceEntries = selectOfflineDefenceEntries(cachedRegistry, dungeonTable);
+      }
+    }
     return cachedRegistry;
   }
 
@@ -488,6 +497,7 @@ function resolveEventManagerConfig(options = {}) {
     tableScan,
     defaultWindowDays: readPositiveInt(env.CS_EVENT_DEFAULT_WINDOW_DAYS, 28),
     officialScheduleEnabled: parseEnvBool(env.CS_EVENT_OFFICIAL_SCHEDULE, true),
+    offlineDefenceEnabled: parseEnvBool(env.CS_EVENT_OFFLINE_DEFENCE, true),
     dateProfilesEnabled: parseEnvBool(env.CS_EVENT_DATE_PROFILES, true),
     inferYearOnly: parseEnvBool(env.CS_EVENT_INFER_YEAR_ONLY, false),
     inferSeasonalIntervals: parseEnvBool(env.CS_EVENT_INFER_SEASONAL_INTERVALS, false),
@@ -971,6 +981,47 @@ function summarizeCounterPass(entry, targetDate, config = {}) {
   };
 }
 
+// The module shortcut needs the collection window and the actual game window.
+// Keep one native-defined boss event available without changing the server clock.
+function selectOfflineDefenceEntries(registry, dungeonTable) {
+  const dungeonRows = dungeonTable && (dungeonTable.records || dungeonTable.root) || [];
+  const dungeonIds = new Set((Array.isArray(dungeonRows) ? dungeonRows : Object.values(dungeonRows))
+    .map((row) => Number(row && row.m_DungeonID)));
+  const entries = registry && registry.entries || [];
+  const defences = entries.filter((entry) => entry.source.tableName === "DEFENCE_TEMPLET")
+    .filter((entry) => {
+      const id = Number(entry.raw.m_Id);
+      return Number.isInteger(id) && id > 0 && id < 999 && dungeonIds.has(Number(entry.raw.m_DungeonID));
+    }).sort((left, right) => Number(right.raw.m_Id) - Number(left.raw.m_Id));
+  for (const defence of defences) {
+    const id = Number(defence.raw.m_Id);
+    const collection = entries.find((entry) => entry.source.tableName === "EVENT_COLLECTION_INDEX_TEMPLET"
+      && new RegExp(`(?:^|[;\\s])DefenceTempletID\\s*=\\s*${id}\\s*;`).test(String(entry.raw.m_Option || ""))
+      && entry.raw.OpenTag === defence.raw.m_OpenTag && entry.raw.DateStrID && entry.raw.EventPrefabID);
+    if (!collection) continue;
+    const lobby = entries.find((entry) => entry.source.tableName === "EVENT_LOBBY_INDEX_TEMPLET"
+      && entry.raw.OpenTag === defence.raw.m_OpenTag && entry.raw.ShortCutType === "SHORTCUT_EVENT_COLLECTION"
+      && Number(entry.raw.ShortCutParam) === Number(collection.raw.EventID) && entry.raw.BannerID);
+    if (!lobby) continue;
+    const intervalTags = uniqueStrings([
+      collection.raw.DateStrID, lobby.raw.IntervalTag, defence.raw.m_DateStrID, defence.raw.m_RewardDateStrID,
+    ]);
+    const startDate = new Date(Date.UTC(2000, 0, 1));
+    const endDate = new Date(Date.UTC(2099, 11, 31, 23, 59, 59));
+    return [{
+      ...collection,
+      id: `offline-defence:${id}`,
+      label: `Offline native defence ${id}`,
+      openTags: [defence.raw.m_OpenTag], intervalTags,
+      startDate, endDate, resolvedStartDate: startDate, resolvedEndDate: endDate,
+      repeatStartDay: 0, repeatEndDay: 0, resolvedRepeatStartDay: 0, resolvedRepeatEndDay: 0,
+      source: { ...collection.source, tableName: "OFFLINE_DEFENCE_EVENT", relativePath: "__offline_defence__", index: 0 },
+      raw: { ...collection.raw, defenceTempletId: id, dungeonId: Number(defence.raw.m_DungeonID), lobbyId: lobby.raw.EventLobbyID },
+    }];
+  }
+  return [];
+}
+
 function buildActiveEventState(registry, config = {}, date = config.eventDate) {
   const targetDate = parseEventDateInput(date);
   const empty = {
@@ -985,9 +1036,13 @@ function buildActiveEventState(registry, config = {}, date = config.eventDate) {
     counterPasses: [],
     counterPassContentsTags: [],
     officialScheduleEntries: [],
+    offlineModuleSuppressedIntervalStrKeys: [],
   };
   if (!config.enabled || !targetDate || !registry || !Array.isArray(registry.entries)) return empty;
 
+  const offlineDefenceSeeds = config.offlineDefenceEnabled
+    ? (registry.offlineDefenceEntries || [])
+    : [];
   const explicitSeeds = selectRegistryEntriesForDate(registry, targetDate);
   const officialScheduleSeeds = selectOfficialScheduleEntries(registry, targetDate, config);
   const profileSeeds = selectDateProfileEntries(targetDate, config);
@@ -1004,6 +1059,7 @@ function buildActiveEventState(registry, config = {}, date = config.eventDate) {
     ...profileSeeds,
   ]);
   const expandableSeeds = uniqueEntries([
+    ...offlineDefenceSeeds,
     ...counterPassSeeds,
     ...explicitSeeds,
     ...profileSeeds,
@@ -1018,19 +1074,43 @@ function buildActiveEventState(registry, config = {}, date = config.eventDate) {
     ...officialScheduleSeeds,
     ...expandableSeeds,
   ]);
-  const entries = uniqueEntries([
+  let entries = uniqueEntries([
     ...officialScheduleSeeds,
     ...expandableSeeds,
     ...expandRelatedEntries(registry, relatedSeeds, { inheritWindows: true }),
   ]).filter((entry) =>
     isEntryCompatibleWithTargetDate(entry, targetDate, config)
   );
+  if (offlineDefenceSeeds.length) {
+    const allowedOpen = new Set(offlineDefenceSeeds.flatMap((entry) => entry.openTags));
+    const allowedDates = new Set(offlineDefenceSeeds.flatMap((entry) => entry.intervalTags));
+    entries = entries.map((entry) => ({
+      ...entry,
+      openTags: entry.openTags.filter((tag) => !/^TAG_COMMON_DEFENCE_DUNGEON_/i.test(tag) || allowedOpen.has(tag)),
+      intervalTags: entry.intervalTags.filter((tag) => !/^DATE_COMMON_DEFENCE_DUNGEON_/i.test(tag) || allowedDates.has(tag)),
+    }));
+  }
   const counterPassEntries = entries.filter(isCounterPassEntry);
   const requiredIntervalData = ensureUniqueIntervalKeys(buildRequiredIntervalData(registry));
   const activeIntervalData = ensureUniqueIntervalKeys(buildActiveIntervalData(entries, targetDate, config));
-  const intervalData = ensureUniqueIntervalKeys(
-    config.emitRequiredIntervals ? mergeIntervalData(requiredIntervalData, activeIntervalData) : activeIntervalData
-  );
+  const offlineModuleSuppressedIntervalStrKeys = offlineDefenceSeeds.length
+    ? uniqueStrings(registry.entries.filter((entry) => ["EVENT_COLLECTION_INDEX_TEMPLET", "DEFENCE_TEMPLET"].includes(entry.source.tableName))
+        .flatMap((entry) => entry.intervalTags))
+        .filter((key) => !offlineDefenceSeeds.some((entry) => entry.intervalTags.includes(key)))
+    : [];
+  // Captured JOIN_LOBBY data can retain older active module windows. The native
+  // lobby selects the first open collection, including unsupported old prefabs.
+  // 1999 is an explicit closure. The native merge preserves captured timing
+  // for its reserved 2000-01-01..2000-01-02 generic fallback window.
+  const suppressedModuleIntervals = offlineModuleSuppressedIntervalStrKeys.map((strKey) => ({
+    key: stablePositiveInt(strKey), strKey,
+    startDate: new Date(Date.UTC(1999, 0, 1)), endDate: new Date(Date.UTC(1999, 0, 2)),
+    repeatStartDate: 0, repeatEndDate: 0, sourceTable: "OFFLINE_DISABLED_MODULE_WINDOW",
+  }));
+  const intervalData = ensureUniqueIntervalKeys(mergeIntervalData(
+    config.emitRequiredIntervals ? mergeIntervalData(requiredIntervalData, activeIntervalData) : activeIntervalData,
+    suppressedModuleIntervals
+  ));
 
   return {
     enabled: true,
@@ -1038,6 +1118,7 @@ function buildActiveEventState(registry, config = {}, date = config.eventDate) {
     seedEntries,
     entries,
     officialScheduleEntries: officialScheduleSeeds,
+    offlineModuleSuppressedIntervalStrKeys,
     intervalData,
     requiredIntervalData,
     contentsTags: collectActiveContentsTags(entries, targetDate, config),
@@ -2332,4 +2413,5 @@ module.exports = {
   readJsonTableFile,
   resolveEventManagerConfig,
   selectRegistryEntriesForDate,
+  selectOfflineDefenceEntries,
 };

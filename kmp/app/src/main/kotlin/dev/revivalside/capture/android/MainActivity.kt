@@ -3,6 +3,7 @@ package dev.revivalside.capture.android
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -50,10 +51,10 @@ class MainActivity : Activity() {
     private lateinit var exportText: TextView
     private lateinit var logText: TextView
     private lateinit var startButton: Button
-    private lateinit var stopButton: Button
     private lateinit var captureButton: Button
     private lateinit var extractButton: Button
     private lateinit var userManagerOpenButton: Button
+    private lateinit var fierceBossButton: Button
     private lateinit var payloadImportButton: Button
     private lateinit var payloadStatusText: TextView
     private lateinit var payloadProgress: ProgressBar
@@ -66,6 +67,9 @@ class MainActivity : Activity() {
     private var vpnReadyForLaunch = false
     private var startFlowToken = 0
     private var listenerProgressAtMs = 0L
+    private var listenerToggleStarting = false
+    private var listenerStopCooldown = false
+    private var listenerReportedRunning: Boolean? = null
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -96,6 +100,13 @@ class MainActivity : Activity() {
                     listenerStatusText.text = message
                     appendLog("Listener: $message")
                     if (isListenerStartupProgress(message)) listenerProgressAtMs = SystemClock.elapsedRealtime()
+                    if (message.startsWith("Listener online") || message.startsWith("Listener is already running") ||
+                        message.startsWith("Listener failed") || message.startsWith("Listener stopped")) {
+                        listenerToggleStarting = false
+                    }
+                    if (message.startsWith("Listener online") || message.startsWith("Listener is already running")) listenerReportedRunning = true
+                    if (message.startsWith("Listener failed") || message.startsWith("Listener stopped")) listenerReportedRunning = false
+                    syncListenerToggle()
                 }
             }
         }
@@ -109,6 +120,12 @@ class MainActivity : Activity() {
         requestNotificationPermissionIfNeeded()
         registerStatusReceiver()
         appendLog("Ready")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!listenerStopCooldown && !listenerToggleStarting) listenerReportedRunning = RevivalSideListenerService.isRunning(this)
+        syncListenerToggle()
     }
 
     override fun onDestroy() {
@@ -151,7 +168,7 @@ class MainActivity : Activity() {
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(22), dp(22), dp(22), dp(174))
+            setPadding(dp(22), dp(22), dp(22), dp(112))
         }
 
         content.addView(TextView(this).apply {
@@ -177,6 +194,19 @@ class MainActivity : Activity() {
                 chip("Target", settings.targetPackage.substringAfterLast('.')),
                 chip("Port", settings.gamePort.toString()),
             ))
+            fierceBossButton = Button(this@MainActivity).apply {
+                text = "激战支援 Boss"
+                textSize = 16f
+                setTextColor(0xfff8fafc.toInt())
+                background = rounded(0xff102033.toInt(), dp(10), 0xfffbbf24.toInt())
+                setOnClickListener { openFierceBossSelector() }
+            }
+            addView(fierceBossButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54)).apply {
+                topMargin = dp(12)
+            })
+            addView(mutedText("切换后重新进入游戏内激战支援即可，无需重启服务。", 12f), fillWrap().apply {
+                topMargin = dp(6)
+            })
             addView(userManagerButton(), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54)).apply {
                 topMargin = dp(12)
             })
@@ -284,120 +314,45 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(14), dp(18), dp(18))
             background = verticalGradient(0xee070b12.toInt(), 0xff0b1020.toInt())
-
-            addView(LinearLayout(this@MainActivity).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                orientation = LinearLayout.VERTICAL
-                addView(TextView(this@MainActivity).apply {
-                    text = "Ready"
-                    textSize = 13f
-                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    setTextColor(0xffffffff.toInt())
-                })
-                addView(mutedText("Switchable RevivalSide / official server bridge", 12f))
-            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = dp(10)
-            })
-
-            val controls = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-
             startButton = Button(this@MainActivity).apply {
-                text = "REVIVALSIDE"
-                textSize = 13f
+                text = "START"
+                textSize = 17f
                 typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
                 setTextColor(0xff06111f.toInt())
                 background = rounded(0xfff8fafc.toInt(), dp(10), 0xffffffff.toInt())
                 setPadding(dp(10), 0, dp(10), 0)
                 minHeight = dp(58)
-                setOnClickListener { startOperation() }
-                setOnLongClickListener {
-                    stopOperation()
-                    true
+                setOnClickListener {
+                    if (listenerReportedRunning ?: RevivalSideListenerService.isRunning(this@MainActivity)) stopOperation() else startOperation()
                 }
             }
-            stopButton = Button(this@MainActivity).apply {
-                text = "STOP"
-                textSize = 17f
-                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                setTextColor(0xfffecdd3.toInt())
-                background = rounded(0xff220914.toInt(), dp(10), 0xfffb7185.toInt())
-                setPadding(dp(10), 0, dp(10), 0)
-                minHeight = dp(58)
-                setOnClickListener { stopOperation() }
-            }
-            captureButton = Button(this@MainActivity).apply {
-                text = "OFFICIAL + ACK"
-                textSize = 13f
-                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                setTextColor(0xffdbeafe.toInt())
-                background = rounded(0xff111827.toInt(), dp(10), 0xff60a5fa.toInt())
-                setPadding(dp(8), 0, dp(8), 0)
-                minHeight = dp(58)
-                setOnClickListener { startJoinLobbyAckCapture() }
-            }
-            extractButton = Button(this@MainActivity).apply {
-                text = "EXTRACT"
-                textSize = 13f
-                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                setTextColor(0xffd1fae5.toInt())
-                background = rounded(0xff071a14.toInt(), dp(10), 0xff34d399.toInt())
-                setPadding(dp(8), 0, dp(8), 0)
-                minHeight = dp(58)
-                setOnClickListener { extractAndCopyLatestJoinLobbyAck() }
-            }
-            controls.addView(stopButton, LinearLayout.LayoutParams(0, dp(62), 1f).apply {
-                rightMargin = dp(8)
-            })
-            controls.addView(captureButton, LinearLayout.LayoutParams(0, dp(62), 1f).apply {
-                rightMargin = dp(8)
-            })
-            controls.addView(extractButton, LinearLayout.LayoutParams(0, dp(62), 1f).apply {
-                rightMargin = dp(8)
-            })
-            controls.addView(startButton, LinearLayout.LayoutParams(0, dp(62), 1f))
-            addView(controls, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(startButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(62)))
+        }
+    }
+
+    private fun syncListenerToggle() {
+        if (!::startButton.isInitialized) return
+        startButton.isEnabled = !listenerToggleStarting && !listenerStopCooldown
+        startButton.text = when {
+            listenerToggleStarting -> "STARTING"
+            (listenerReportedRunning ?: RevivalSideListenerService.isRunning(this@MainActivity)) -> "STOP"
+            else -> "START"
         }
     }
 
     private fun startOperation() {
         val settings = saveSettingsFromInputs()
-        val token = ++startFlowToken
-        stopVpnService()
-        setUserManagerButtonBusy(false)
-        startButton.isEnabled = false
-        startButton.text = "STARTING"
-        launchAfterStart = true
-        listenerReadyForLaunch = false
-        vpnReadyForLaunch = false
-        appendLog("Validating patched Counter:Side client")
-        Thread {
-            val clientValidation = validateInstalledAndroidClient(applicationContext, settings.targetPackage, settings.httpPort)
-            val validation = if (clientValidation.ok) {
-                val importedPayload = AndroidPayloadCache.validate(applicationContext)
-                val payloadValidation = if (importedPayload.ok || settings.assetCdnBaseUrl.startsWith("http://127.0.0.1:${settings.httpPort}/")) {
-                    importedPayload
-                } else {
-                    validateAndroidPayloadHost(applicationContext, settings.assetCdnBaseUrl)
-                }
-                if (payloadValidation.ok) payloadValidation.copy(message = "${clientValidation.message}; ${payloadValidation.message}") else payloadValidation
-            } else {
-                clientValidation
-            }
-            runOnUiThread {
-                if (!launchAfterStart || token != startFlowToken) return@runOnUiThread
-                if (!validation.ok) {
-                    failStartOperation(validation.message)
-                    return@runOnUiThread
-                }
-                appendLog(validation.message)
-                vpnReadyForLaunch = true
-                startListener(settings)
-                waitForListenerHealth(settings, token, attempt = 0)
-            }
-        }.start()
+        startFlowToken += 1
+        launchAfterStart = false
+        launchAfterCapture = false
+        listenerToggleStarting = true
+        syncListenerToggle()
+        runCatching { startListener(settings) }.onFailure { error ->
+            listenerToggleStarting = false
+            listenerReportedRunning = false
+            appendLog("Listener failed: ${error.message}")
+            syncListenerToggle()
+        }
     }
 
     private fun openPayloadZipPicker() {
@@ -459,10 +414,8 @@ class MainActivity : Activity() {
         vpnReadyForLaunch = false
         setUserManagerButtonBusy(false)
         setCaptureButtonBusy(true)
-        if (::startButton.isInitialized) {
-            startButton.isEnabled = true
-            startButton.text = "REVIVALSIDE"
-        }
+        listenerToggleStarting = false
+        syncListenerToggle()
         appendLog("Switching to the official server for JOIN_LOBBY_ACK capture")
         stopVpnService()
         startListener(settings)
@@ -507,15 +460,18 @@ class MainActivity : Activity() {
         listenerReadyForLaunch = false
         vpnReadyForLaunch = false
         setUserManagerButtonBusy(false)
-        if (::startButton.isInitialized) {
-            startButton.isEnabled = true
-            startButton.text = "REVIVALSIDE"
-        }
+        listenerToggleStarting = false
+        listenerReportedRunning = false
+        listenerStopCooldown = true
+        syncListenerToggle()
         setCaptureButtonBusy(false)
         setExtractButtonBusy(false)
         appendLog("Stop requested")
         stopVpnService()
         stopListener()
+        syncListenerToggle()
+        // The embedded Node process exits after 250 ms; prevent a restart racing that exit.
+        handler.postDelayed({ listenerStopCooldown = false; syncListenerToggle() }, 500L)
     }
 
     private fun setExtractButtonBusy(busy: Boolean) {
@@ -528,8 +484,8 @@ class MainActivity : Activity() {
         if (!launchAfterStart || !listenerReadyForLaunch || !vpnReadyForLaunch) return
         launchAfterStart = false
         appendLog("Launching CounterSide")
-        startButton.isEnabled = true
-        startButton.text = "REVIVALSIDE"
+        listenerToggleStarting = false
+        syncListenerToggle()
         launchCounterSide()
     }
 
@@ -538,10 +494,8 @@ class MainActivity : Activity() {
         listenerReadyForLaunch = false
         vpnReadyForLaunch = false
         appendLog(message)
-        if (::startButton.isInitialized) {
-            startButton.isEnabled = true
-            startButton.text = "REVIVALSIDE"
-        }
+        listenerToggleStarting = false
+        syncListenerToggle()
     }
 
     private fun waitForListenerHealth(settings: RevivalSideSettings, token: Int, attempt: Int) {
@@ -908,6 +862,74 @@ class MainActivity : Activity() {
         appendLog("Opening user manager")
         startListener(settings)
         waitForUserManager(settings, token, url, attempt = 0)
+    }
+
+    private fun openFierceBossSelector() {
+        val settings = saveSettingsFromInputs()
+        fierceBossButton.isEnabled = false
+        fierceBossButton.text = "正在加载 Boss…"
+        Thread {
+            val result = runCatching { FierceBossApi.load(settings.httpPort) }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                fierceBossButton.isEnabled = true
+                fierceBossButton.text = "激战支援 Boss"
+                result.onSuccess { state -> showFierceBossSelector(state) }
+                    .onFailure { error -> showFierceBossError(error) }
+            }
+        }.start()
+    }
+
+    private fun showFierceBossSelector(state: FierceBossState) {
+        val choices = listOf(FierceBossOption(0, "自动轮换")) + state.options
+        var selected = choices.indexOfFirst { it.seasonId == state.seasonId }.coerceAtLeast(0)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("激战支援 Boss · 当前：${state.activeName}")
+            .setSingleChoiceItems(choices.map { it.name }.toTypedArray(), selected) { _, index -> selected = index }
+            .setNegativeButton("取消", null)
+            .setPositiveButton("保存并切换", null)
+            .create()
+        dialog.setOnShowListener {
+            val save = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            save.setOnClickListener {
+                val seasonId = choices[selected].seasonId
+                save.isEnabled = false
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled = false
+                dialog.setCancelable(false)
+                save.text = "正在切换…"
+                Thread {
+                    val result = runCatching { FierceBossApi.save(state.port, seasonId) }
+                    runOnUiThread {
+                        if (isFinishing || isDestroyed) return@runOnUiThread
+                        result.onSuccess { updated ->
+                            dialog.dismiss()
+                            appendLog("激战支援 Boss：${updated.activeName}")
+                            AlertDialog.Builder(this)
+                                .setTitle("已切换为：${updated.activeName}")
+                                .setMessage("返回游戏，退出并重新进入激战支援即可挑战。无需重启服务。")
+                                .setPositiveButton("知道了", null)
+                                .show()
+                        }.onFailure { error ->
+                            save.isEnabled = true
+                            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled = true
+                            dialog.setCancelable(true)
+                            save.text = "保存并切换"
+                            showFierceBossError(error)
+                        }
+                    }
+                }.start()
+            }
+        }
+        dialog.show()
+        if (state.warning.isNotBlank()) appendLog(state.warning)
+    }
+
+    private fun showFierceBossError(error: Throwable) {
+        AlertDialog.Builder(this)
+            .setTitle("激战支援 Boss")
+            .setMessage(error.message ?: "Boss 配置暂不可用，请稍后重试。")
+            .setPositiveButton("知道了", null)
+            .show()
     }
 
     private fun waitForUserManager(settings: RevivalSideSettings, token: Int, url: String, attempt: Int) {

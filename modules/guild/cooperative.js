@@ -4,7 +4,7 @@ const { randomUUID } = require("node:crypto");
 const { readGameplayTableRecords, readGameplayTable } = require("../gameplay-jsons");
 const { dateTimeBinaryForDate } = require("../server-time");
 const { buildPlayerDeckForGameLoad } = require("../unit");
-const { getMiscItem, spendMiscItem, toBigInt } = require("../inventory");
+const { getMiscItem } = require("../inventory");
 const { grantRewardByType } = require("../reward");
 const codec = require("../packet-codec");
 
@@ -19,14 +19,37 @@ function catalog() {
 }
 function now(ctx) { return ctx.getServerNowDate ? ctx.getServerNowDate() : new Date(); }
 function binary(value) { return String(dateTimeBinaryForDate(value instanceof Date ? value : new Date(value))); }
-function parseDate(value) { return Date.parse(String(value).replace(/\.\d{7}$/, "") + (String(value).endsWith("Z") ? "" : "Z")); }
+function parseDate(value) {
+  if (value instanceof Date) return value.getTime();
+  if (!value) return NaN;
+  let text = String(value).trim().replace(" ", "T").replace(/(\.\d{3})\d+/, "$1");
+  if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)) text += "Z";
+  return Date.parse(text);
+}
+function list(value) { return Array.isArray(value) ? value : value && typeof value === "object" ? Object.values(value) : value ? [value] : []; }
+function field(row, ...names) { return names.map(name => row[name]).find(value => value != null); }
 function error(message, code) { const failure = new Error(message); failure.errorCode = code; return failure; }
 function selectedSeason(ctx) {
   const data = catalog();
-  const tags = new Set(ctx.getEffectiveContentsTags ? ctx.getEffectiveContentsTags([]) : []);
-  const eligible = data.seasons.filter(row => !tags.size || !(row.listContentsTagAllow || []).length || row.listContentsTagAllow.some(tag => tags.has(tag))).map(season => ({ season, interval: data.intervals.find(row => row.m_DateStrID === season.m_DateStrID) })).filter(row => row.interval);
-  const started = eligible.filter(row => parseDate(row.interval.m_DateStart) <= now(ctx).getTime());
-  const chosen = (started.length ? started : eligible).sort((a, b) => parseDate(a.interval.m_DateStart) - parseDate(b.interval.m_DateStart) || a.season.m_SeasonID - b.season.m_SeasonID).at(-1);
+  const tags = new Set(list(ctx.getEffectiveContentsTags ? ctx.getEffectiveContentsTags([]) : []).map(tag => String(tag).toUpperCase()));
+  const eligible = data.seasons.map((row, sourceOrder) => ({ ...row, sourceOrder,
+    m_SeasonID: Number(field(row,"m_SeasonID","SeasonId","seasonId")),
+    m_SeasonDungeonGroup: Number(field(row,"m_SeasonDungeonGroup","SeasonDungeonGroup","seasonDungeonGroup")),
+    m_SeasonRaidGroup: Number(field(row,"m_SeasonRaidGroup","SeasonRaidGroup","seasonRaidGroup")),
+    m_SeasonRewardGroup: Number(field(row,"m_SeasonRewardGroup","SeasonRewardGroup","seasonRewardGroup")),
+    m_DateStrID: String(field(row,"m_DateStrID","SeasonDateStrId","seasonDateStrId") || ""),
+    listContentsTagAllow: list(field(row,"listContentsTagAllow","m_OpenTag","OpenTag","openTag")),
+  })).filter(season => season.m_SeasonID > 0 && season.m_DateStrID && (!tags.size || !season.listContentsTagAllow.length || season.listContentsTagAllow.some(tag => tags.has(String(tag).toUpperCase()))) &&
+    data.schedules.some(row => row.m_SeasonDungeonGroup === season.m_SeasonDungeonGroup) && data.arenas.some(row => row.m_SeasonDungeonGroup === season.m_SeasonDungeonGroup) && data.bosses.some(row => row.m_SeasonRaidGroup === season.m_SeasonRaidGroup))
+    .map(season => {
+      const original = data.intervals.find(row => String(field(row,"m_DateStrID","StrKey","strKey") || "").toUpperCase() === season.m_DateStrID.toUpperCase());
+      // Frozen Android exports an empty INTERVAL_TEMPLET; 205 supplies these dates dynamically.
+      const interval = original ? { ...original, m_DateID: Number(field(original,"m_DateID","Key","key")), m_DateStart: field(original,"m_DateStart","StartDate","startDate"), m_DateEnd: field(original,"m_DateEnd","EndDate","endDate") } : { m_DateStrID: season.m_DateStrID, m_DateID: 2000000000 + season.m_SeasonID };
+      return { season, interval };
+    });
+  const dated = eligible.filter(row => Number.isFinite(parseDate(row.interval.m_DateStart)));
+  const started = dated.filter(row => parseDate(row.interval.m_DateStart) <= now(ctx).getTime());
+  const chosen = (started.length ? started : dated.length ? dated : eligible).sort((a, b) => (parseDate(a.interval.m_DateStart) || 0) - (parseDate(b.interval.m_DateStart) || 0) || a.season.sourceOrder - b.season.sourceOrder).at(-1);
   if (!chosen) throw error("guild cooperative season unavailable", 20635);
   return chosen;
 }
@@ -42,7 +65,7 @@ function currentSession(data, date) {
   if (!next) return null;
   return date < next.startMs ? sessions.find(session => session.sessionId === next.sessionId - 1) || null : next;
 }
-function ensureState(ctx, guild, helpers) {
+function ensureCalendar(ctx, guild) {
   const data = catalog();
   let state = guild.cooperative;
   const chosen = selectedSeason(ctx);
@@ -55,7 +78,12 @@ function ensureState(ctx, guild, helpers) {
     state = { version: 1, seasonId: chosen.season.m_SeasonID, seasonKey: chosen.season.m_DateStrID, windowId: randomUUID(), sessionCount: count, startMs: start.getTime(), endMs: start.getTime() + ((count - 1) * 7 + 5) * DAY_MS, killPoint: 0, memberTotals: {}, sessions: {} };
     guild.cooperative = state;
   }
-  const season = data.seasons.find(row => row.m_SeasonID === state.seasonId);
+  const season = chosen.season;
+  return { state, season };
+}
+function ensureState(ctx, guild, helpers) {
+  const data = catalog();
+  const { state, season } = ensureCalendar(ctx, guild);
   const session = currentSession(state, now(ctx).getTime());
   if (!season || !session) throw error("guild cooperative session unavailable", 20634);
   const schedule = data.schedules.find(row => row.m_SeasonDungeonGroup === season.m_SeasonDungeonGroup && row.m_SeasonSessionIndex === session.sessionId);
@@ -81,16 +109,18 @@ function info(ctx, user, guild, helpers) {
   const member = live.progress.members[String(user.userUid)];
   if (!member) throw error("guild cooperative member missing", 20443);
   const next = sessionsFor(live.state).find(session => session.sessionId === live.session.sessionId + 1);
-  return { errorCode: 0, guildDungeonState: live.playable ? 1 : 3, seasonId: live.state.seasonId, sessionId: live.session.sessionId, currentSessionEndDate: binary(live.session.endMs), NextSessionStartDate: binary(next ? next.startMs : live.state.endMs + 2 * DAY_MS), arenaList: live.progress.arenas, lastSeasonRewardData: [{ category: 0, totalValue: live.state.killPoint, receivedValue: member.receivedRank || 0 }, { category: 1, totalValue: live.state.memberTotals[user.userUid].tryCount, receivedValue: member.receivedTry || 0 }], bossData: { ...live.progress.boss, playCount: Math.max(0, Number(catalog().basic.BOSS_PLAY_COUNT_BASIC || 5) - member.bossPlays) }, arenaTicketBuyCount: member.ticketBuyCount, canReward: !member.claimed && Object.keys(member.rewards).length > 0 };
+  return { errorCode: 0, guildDungeonState: live.playable ? 1 : 3, seasonId: live.state.seasonId, sessionId: live.session.sessionId, currentSessionEndDate: binary(live.session.endMs), NextSessionStartDate: binary(next ? next.startMs : live.state.endMs + 2 * DAY_MS), arenaList: live.progress.arenas, lastSeasonRewardData: [{ category: 0, totalValue: live.state.killPoint, receivedValue: member.receivedRank || 0 }, { category: 1, totalValue: live.state.memberTotals[user.userUid].tryCount, receivedValue: member.receivedTry || 0 }], bossData: { ...live.progress.boss, playCount: Number(catalog().basic.BOSS_PLAY_COUNT_BASIC || 5) }, arenaTicketBuyCount: 0, canReward: !member.claimed && Object.keys(member.rewards).length > 0 };
 }
 function memberInfo(ctx, user, guild, helpers) {
   const live = ensureState(ctx, guild, helpers);
-  return { errorCode: 0, memberInfoList: guild.members.map(member => ({ profile: member.commonProfile, arenaList: live.progress.members[member.commonProfile.userUid].arenaList, bossPoint: live.progress.members[member.commonProfile.userUid].bossPoint })) };
+  // Native MEMBER OnRecv subtracts the current user's arenaList.Count from available entries.
+  // Keep real history in the save; an empty debit list leaves local entries available after every result/relogin.
+  return { errorCode: 0, memberInfoList: guild.members.map(member => ({ profile: member.commonProfile, arenaList: String(member.commonProfile.userUid) === String(user.userUid) ? [] : live.progress.members[member.commonProfile.userUid].arenaList, bossPoint: live.progress.members[member.commonProfile.userUid].bossPoint })) };
 }
 function buildSeasonIntervals(ctx, guild, helpers) {
   let state;
   let interval;
-  if (guild) { const live = ensureState(ctx, guild, helpers); state = live.state; interval = catalog().intervals.find(row => row.m_DateStrID === state.seasonKey); }
+  if (guild) { const live = ensureCalendar(ctx, guild); state = live.state; interval = selectedSeason(ctx).interval; }
   else {
     const chosen = selectedSeason(ctx); interval = chosen.interval;
     const count = Math.max(...catalog().schedules.filter(row => row.m_SeasonDungeonGroup === chosen.season.m_SeasonDungeonGroup).map(row => row.m_SeasonSessionIndex));
@@ -120,8 +150,6 @@ function prepareArena(ctx, user, guild, req, helpers) {
   if (arena.playUserUid !== "0") throw error("guild cooperative arena busy", 20644);
   const artifactCount = catalog().artifacts.filter(row => row.m_StageRewardArtifactGroup === arena.artifactGroup).length;
   if (arena.totalMedalCount >= artifactCount * Number(catalog().basic.ARTIFACT_FULIFICATION_COUNT || 10)) throw error("guild cooperative arena artifacts complete", 20646);
-  const limit = Number(catalog().basic.ARENA_PLAY_COUNT_BASIC || 5) + member.ticketBuyCount;
-  if (member.arenaList.length >= limit) throw error("guild cooperative arena tickets exhausted", 20647);
   const stage = ctx.getGenericStageForRequest && ctx.getGenericStageForRequest({ dungeonID: arena.dungeonId });
   if (!stage || stage.dungeonID !== arena.dungeonId) throw error("guild cooperative dungeon unavailable", 20637);
   const loadReq = { ...req, stageID: stage.stageId, dungeonID: arena.dungeonId, gameType: 16, rewardMultiply: 1 };
@@ -139,7 +167,7 @@ function prepareBoss(ctx, user, guild, req, helpers) {
   else if (!member || member.pending) throw error("guild cooperative battle already loading", 20657);
   const boss = live.bosses.find(row => row.m_StageID === Number(req.bossStageId));
   if (!boss || !req.isPractice && boss.m_StageID !== live.progress.boss.stageId) throw error("guild cooperative invalid boss stage", 20652);
-  if (!req.isPractice && (member.bossPlays >= Number(catalog().basic.BOSS_PLAY_COUNT_BASIC || 5) || live.progress.boss.remainHp <= 0)) throw error("guild cooperative boss tickets exhausted", 20645);
+  if (!req.isPractice && live.progress.boss.remainHp <= 0) throw error("guild cooperative boss defeated", 20645);
   if (!req.isPractice && live.progress.boss.playUserUid !== "0") throw error("guild cooperative boss busy", 20657);
   const stage = ctx.getGenericStageForRequest && ctx.getGenericStageForRequest({ dungeonID: boss.m_StageID });
   if (!stage || stage.dungeonID !== boss.m_StageID) throw error("guild cooperative dungeon unavailable", 20637);
@@ -207,14 +235,26 @@ function completeBattle(ctx, user, guild, game, battle, options, helpers) {
 }
 function cancelBattle(ctx, user, guild, game, helpers) {
   if (game && (!game.guildBattleToken || String(game.guildUid) !== guild.guildUid)) return null;
-  const live = ensureState(ctx, guild, helpers);
-  const member = live.progress.members[user.userUid];
-  if (!member || !member.pending || game && member.pending.token !== game.guildBattleToken) return null;
+  const stored = guild.cooperative;
+  const progress = Object.values(stored && stored.sessions || {}).find(session => {
+    const member = session.members && session.members[user.userUid];
+    return member && member.pending && (!game || member.pending.token === game.guildBattleToken);
+  });
+  if (!progress) return null;
+  const member = progress.members[user.userUid];
   const pending = member.pending; member.pending = null;
   const first = [];
-  if (pending.kind === "arena") { live.progress.arenas.find(row => row.arenaIndex === pending.arenaIndex).playUserUid = "0"; first.push({ packetId: 3486, data: { arenaIndex: pending.arenaIndex } }); }
-  if (pending.kind === "boss") { live.progress.boss.playUserUid = "0"; first.push({ packetId: 3487, data: { playUserUid: user.userUid } }); }
-  return { packets: resultPackets(ctx, user, guild, helpers, first) };
+  if (pending.kind === "arena") {
+    const arena = progress.arenas.find(row => row.arenaIndex === pending.arenaIndex);
+    if (arena) arena.playUserUid = "0";
+    first.push({ packetId: 3486, data: { arenaIndex: pending.arenaIndex } });
+  }
+  if (pending.kind === "boss") { progress.boss.playUserUid = "0"; first.push({ packetId: 3487, data: { playUserUid: user.userUid } }); }
+  try { return { packets: resultPackets(ctx, user, guild, helpers, first) }; }
+  catch (failure) {
+    console.log(`[guild:cancel] cleared reservation; status refresh unavailable code=${failure.errorCode || 20191}`);
+    return { packets: first };
+  }
 }
 function request(ctx, user, guild, id, req, helpers) {
   if (id === 3471) return info(ctx, user, guild, helpers);
@@ -228,10 +268,8 @@ function request(ctx, user, guild, id, req, helpers) {
   }
   if (id === 3494) { if (req.orderIndex < 0 || req.orderIndex > 5) throw error("guild cooperative invalid order", 23903); live.progress.boss.orderIndex = req.orderIndex; return { errorCode: 0, orderIndex: req.orderIndex }; }
   if (id === 3483) {
-    if (member.ticketBuyCount >= Number(catalog().basic.ARENA_TICKET_BUY_COUNT || 1)) throw error("guild cooperative ticket buy limit", 20648);
-    const price = BigInt(catalog().basic.TICKET_COST || 200);
-    const current = getMiscItem(user, 101); if (toBigInt(current.countFree) + toBigInt(current.countPaid) < price) throw error("guild cooperative insufficient quartz", 96);
-    member.ticketBuyCount += 1; return { errorCode: 0, currentTicketBuyCount: member.ticketBuyCount, costItemData: spendMiscItem(user, 101, price) };
+    // A stale purchase dialog must not charge quartz for entries that already stay available.
+    return { errorCode: 0, currentTicketBuyCount: 0, costItemData: getMiscItem(user, 101) };
   }
   if (id === 3477) {
     if (member.claimed || !Object.keys(member.rewards).length) throw error("guild cooperative no session reward", 20672);
